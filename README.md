@@ -43,16 +43,50 @@ easy IPC, much more QoL stuff than other compositors and more...
 > `decoration:motion_blur:decay`, milliseconds (**0–1000**, default **0**) the recorded smear
 > keeps shrinking toward the window's final box after the movement stops — a finite, linearly
 > decaying smear re-rendered from the recorded motion, not a replay of cached frames (`strength`
-> is purely spatial; `decay` only extends how long the trail lingers). The bundled
+> is purely spatial; `decay` only extends how long the trail lingers); and per-surface toggles
+> selecting which motion records a trail (all default off unless stated, all subordinate to the
+> global `:enabled`/`:samples`/`:strength` gates; `:decay` controls settling):
+>
+> | Option | Default | Blurs |
+> |---|---|---|
+> | `window_animations` | `true` | mapped window animations (open/move/resize/layout changes) — pre-existing behavior, kept as a toggle |
+> | `workspaces` | `false` | workspace motion (keyboard switches, gestures/swipes, special-workspace toggles) for windows on the moving workspace; pinned windows are excluded |
+> | `window_close` | `false` | the close animation: the trail is continued over the full snapshot mapping (the fadeout samples its own animated box, so the smear tracks the snapshot's slide/scale) |
+> | `popups` | `false` | real spatial popup movement (parent-window motion, workspace motion, the popup's own repositioning); opacity-only fades/spawns never smear — a fade-only spawn has no trail by design |
+> | `layers` | `false` | layer-shell slide/popin entry/exit animations; stationary alpha fades do not smear, and silent layout rearranges (teleports without an animation) do not either |
+> | `fullscreen` | `false` | permits fullscreen windows to participate in the enabled window/workspace blur paths; does not create motion itself |
+>
+> Implementation: records are unified **screen-space box pairs** (`MotionBlur::CTracker`, `previous`/`current` with the
+> workspace render offset and floating offset baked in at record time). Window records happen event-driven (animation
+> tick, drags); pure workspace displacement is frame-sampled once per rendered frame on the render path (skip/anchor
+> decisions prevent full-screen first-frame smears after occlusion, teleports or off-screen transit, and never clobber an
+> event-driven record of the same frame). Rendering reuses the existing motion-blur shader/`CTex` infrastructure with the
+> exact per-surface UV mapping (buffer scales and viewport crops preserved); popups/layer surfaces render
+> through their normal passes, no extra framebuffers are allocated for ordinary unchanged surfaces, and trails render
+> inside the recorded hull only. Toggling a sub-feature off stops recording and the stale trail is cleared by the bounded
+> staleness/decay logic (≤100 ms without `:decay`, else the configured `:decay` window) — no unbounded timers.
+>
+> Known limits: popup/layer surfaces with non-normal buffer transforms use the normal unblurred path.
+> Menus/tooltips that only fade in place have no spatial motion to smear; this does not add new popup animations.
+> Validation bounds: `:samples` 1–64, `:strength` 0–10, `:decay` 0–1000; helper math is covered by
+> `tests/helpers/MotionBlur.cpp`. The bundled
 > [`example/hyprland.lua`](example/hyprland.lua) demonstrates enabling it with
 > `enabled = true, samples = 8, strength = 2, decay = 200`.
 >
-> This repository is a **source/build artifact only**: compiling it produces a patched
-> compositor binary. A stock (unpatched) Hyprland has no such option, and the patched binary
-> is not what currently runs in the live session. The tests and build passed when the patch
-> was written, but the patched compositor has not been exercised in a live session. Nothing
-> here is official, supported by, affiliated with, or endorsed by upstream hyprwm — do not
-> report this fork's behavior there.
+> Verification status: all **299 unit tests** pass, and the built `Hyprland --version` command runs
+> successfully. The build reported stale gcov profile checksum warnings after recompilation; the
+> unit-test run completed without those warnings. A next-login isolated trial is authorized: the
+> committed build is installed under `~/.local/opt/hyprland-animation-blur` (with the companion
+> cursor plugin rebuilt against that trial's installed headers), and the new config
+> `~/.config/hypr/animation-blur.lua` activates it at the next login; the trial artifact's version
+> reports this source commit instead of the older embedded `db28a35e` identity. No new rendering or
+> live verification was performed — the earlier UI checks do not verify the new rendering paths
+> visually, and the workstation remains in use.
+>
+> This repository is a **source/build artifact only**. The working installation under
+> `~/.local/opt/hyprland-motion-blur` is preserved untouched and keeps running the `db28a35e`
+> build (strength/decay) in the live session. Nothing here is official, supported by, affiliated
+> with, or endorsed by upstream hyprwm — do not report this fork's behavior there.
 
 # Features
 

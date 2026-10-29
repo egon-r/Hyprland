@@ -7,6 +7,8 @@
 
 #include <optional>
 
+struct SMotionBlurData;
+
 namespace Render {
     class IFramebuffer;
     enum class eSceneMode : uint8_t;
@@ -66,17 +68,18 @@ namespace Desktop {
       public:
         virtual ~IFadeout() = default;
 
-        virtual PHLMONITORREF         monitor() const = 0;
-        PHLWORKSPACEREF               workspace() const;
-        virtual eFadeoutPlane         plane() const  = 0;
-        virtual int                   zIndex() const = 0;
-        SP<Render::IFramebuffer>      framebuffer() const;
-        SP<Render::IFramebuffer>      framebuffer(Render::eSceneMode mode) const;
-        virtual CBox                  renderBox() const = 0;
-        virtual float                 alpha() const     = 0;
-        virtual bool                  done() const      = 0;
-        virtual SFadeoutRenderEffects effects() const;
-        virtual SFadeoutSource        source() const;
+        virtual PHLMONITORREF                  monitor() const = 0;
+        PHLWORKSPACEREF                        workspace() const;
+        virtual eFadeoutPlane                  plane() const  = 0;
+        virtual int                            zIndex() const = 0;
+        SP<Render::IFramebuffer>               framebuffer() const;
+        SP<Render::IFramebuffer>               framebuffer(Render::eSceneMode mode) const;
+        virtual CBox                           renderBox() const = 0;
+        virtual float                          alpha() const     = 0;
+        virtual bool                           done() const      = 0;
+        virtual SFadeoutRenderEffects          effects() const;
+        virtual SFadeoutSource                 source() const;
+        virtual std::optional<SMotionBlurData> motionBlur() const;
 
       protected:
         IFadeout() = default;

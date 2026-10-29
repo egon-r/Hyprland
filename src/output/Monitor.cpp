@@ -1765,7 +1765,9 @@ uint32_t CMonitor::isSolitaryBlocked(bool full) {
     }
 
     if (PCANDIDATE->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT) != m_size || PCANDIDATE->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT) != m_position ||
-        PCANDIDATE->positionAnimation()->isBeingAnimated() || PCANDIDATE->sizeAnimation()->isBeingAnimated()) {
+        PCANDIDATE->positionAnimation()->isBeingAnimated() || PCANDIDATE->sizeAnimation()->isBeingAnimated() ||
+        // an opted-in live motion trail keeps rendering a smear past the geometry: direct scanout would drop it
+        (PCANDIDATE->effects().motionBlurState().has_value())) {
         reasons |= SC_TRANSFORM;
         if (!full)
             return reasons;

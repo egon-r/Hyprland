@@ -138,6 +138,13 @@ hl.config({
             samples  = 8,
             strength = 2,
             decay    = 200,
+            -- Additional targets stay opt-in; mouse drag blur remains controlled by enabled.
+            window_animations = true,  -- open/move/resize, including dialogs
+            workspaces        = false, -- slide/special-workspace transitions and gestures
+            window_close      = false, -- animated closing snapshots
+            popups            = false, -- spatially moving menus/tooltips, not opacity-only fades
+            layers            = false, -- layer-shell slide/popin entry and exit
+            fullscreen        = false, -- permits enabled targets to affect fullscreen windows
         },
     },
 

@@ -8,6 +8,7 @@
 #include "../../helpers/AnimatedVariable.hpp"
 #include "../../render/Framebuffer.hpp"
 #include "../../macros/Enums.hpp"
+#include "../../helpers/MotionBlur.hpp"
 #include "types/GeometricMovableAnimated.hpp"
 #include "types/AlphaModifiable.hpp"
 #include "surfaceTree/PopupOwner.hpp"
@@ -79,6 +80,8 @@ namespace Desktop::View {
 
         CLayerSurfaceAnimationController        m_animationController;
 
+        MotionBlur::CTracker                    m_motionBlur;
+
         CBox                                    m_geometry = {0, 0, 0, 0};
         Vector2D                                m_position;
         std::string                             m_namespace = "";
@@ -90,6 +93,13 @@ namespace Desktop::View {
         void                                    onUnmap();
         void                                    onCommit();
         MONITORID                               monitorID();
+
+        // motion blur: real spatial motion (slide/popin) recorded on the render path; stationary alpha fades never smear
+        std::optional<MotionBlur::SState> motionBlurState(bool allowStale = false) const;
+        void                              recordMotionBlur(const CBox& previous, const CBox& current);
+        void                              sampleMotionBlurFrame(const CBox& composedGlobalBox);
+        void                              damageMotionBlur(bool allowStale = false) const;
+        void                              resetMotionBlur();
 
       private:
         bool m_mapped = false;

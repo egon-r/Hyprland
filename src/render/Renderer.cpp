@@ -287,6 +287,10 @@ bool IHyprRenderer::shouldRenderWindow(PHLWINDOW pWindow, PHLMONITOR pMonitor) {
             windowBox.translate(PWINDOWWORKSPACE->m_renderOffset->value());
         windowBox.translate(pWindow->presentation().floatingOffset());
 
+        // a live motion trail must keep rendering even when the window box itself already left the monitor
+        if (const auto STATE = pWindow->effects().motionBlurState())
+            windowBox = STATE->extents();
+
         const CBox monitorBox = {pMonitor->m_position, pMonitor->m_size};
         if (!windowBox.intersection(monitorBox).empty() && (pWindow->m_workspace == pMonitor->m_activeWorkspace || pWindow->presentation().movingFromMonitor()))
             return true;
@@ -294,7 +298,6 @@ bool IHyprRenderer::shouldRenderWindow(PHLWINDOW pWindow, PHLMONITOR pMonitor) {
 
     return false;
 }
-
 bool IHyprRenderer::shouldRenderWindow(PHLWINDOW pWindow) {
 
     if (!validMapped(pWindow))
@@ -611,6 +614,19 @@ static bool shouldRenderPopup(WP<Desktop::View::CPopup> popup, bool workspaceSce
                              });
 }
 
+// composes monitor-relative logical motion data for surface-level draws (popups, layers); windows ride the transformed pass
+static SMotionBlurData motionBlurRenderDataForSurfaces(const std::optional<MotionBlur::SState>& state, PHLMONITOR pMonitor) {
+    if (!state)
+        return {};
+
+    SMotionBlurData motionBlur;
+    motionBlur.enabled  = true;
+    motionBlur.previous = state->previous.copy().translate(-pMonitor->m_position);
+    motionBlur.current  = state->current.copy().translate(-pMonitor->m_position);
+    motionBlur.samples  = state->samples;
+    return motionBlur;
+}
+
 void IHyprRenderer::renderWindow(CRenderContext& ctx, PHLWINDOW pWindow, PHLMONITOR pMonitor, const SWindowRenderPresentation& presentation, const Time::steady_tp& time,
                                  bool decorate, eRenderPassMode mode, bool ignorePosition, bool standalone) {
     if (!ctx.shouldRenderContent(pWindow->m_ruleApplicator->noScreenShare().valueOrDefault()))
@@ -700,6 +716,12 @@ void IHyprRenderer::renderWindow(CRenderContext& ctx, PHLWINDOW pWindow, PHLMONI
 
     // render window decorations first, if not fullscreen full
     if (mode == RENDER_PASS_ALL || mode == RENDER_PASS_MAIN) {
+
+        // unified screen-space sampling: records pure workspace displacement (keyboard slides and swipes) once per rendered
+        // frame; event-driven records of the same frame write the identical composed box and keep authority via the SKIP path.
+        // Runs before the transformer branch so the first-ever workspace record can create the transformer.
+        if (!standalone && !ctx.m_renderingSnapshot)
+            pWindow->effects().sampleMotionBlurFrame(pWindow->effects().motionBlurRecordBox());
 
         const bool      TRANSFORMEDWINDOW = pWindow->effects().hasActiveTransformers();
         UP<CRenderPass> transformedPass;
@@ -851,7 +873,7 @@ void IHyprRenderer::renderWindow(CRenderContext& ctx, PHLWINDOW pWindow, PHLMONI
             const auto PARENTFADEALPHA = renderdata.fadeAlpha;
 
             pWindow->popupHead()->breadthfirst(
-                [this, &ctx, &renderdata, PARENTFADEALPHA](WP<Desktop::View::CPopup> popup, void* data) {
+                [this, &ctx, &renderdata, &pMonitor, PARENTFADEALPHA](WP<Desktop::View::CPopup> popup, void* data) {
                     if (!shouldRenderPopup(popup, renderdata.workspacePresentation.workspaceScene))
                         return;
 
@@ -859,6 +881,13 @@ void IHyprRenderer::renderWindow(CRenderContext& ctx, PHLWINDOW pWindow, PHLMONI
                     const Vector2D oldPos = renderdata.pos;
                     renderdata.pos += pos;
                     renderdata.fadeAlpha = PARENTFADEALPHA * popup->alpha()[POPUP_ALPHA_FADE]->value();
+
+                    // per-popup-node screen-space sampling at the ACTUAL drawn rect (global, incl. workspace/floating
+                    // offsets and XDG geometry): covers parent motion, workspace motion and the popup's own repositioning;
+                    // alpha-only fades never record
+                    if (!ctx.m_renderingSnapshot)
+                        popup->sampleMotionBlurFrame({renderdata.pos, popup->size()});
+                    renderdata.motionBlur = motionBlurRenderDataForSurfaces(popup->motionBlurState(), pMonitor);
 
                     popup->wlSurface()->resource()->breadthfirst(
                         [this, &ctx, &renderdata](SP<CWLSurfaceResource> s, const Vector2D& offset, void* data) {
@@ -1039,8 +1068,14 @@ void IHyprRenderer::renderLayer(CRenderContext& ctx, PHLLS pLayer, PHLMONITOR pM
 
     TRACY_GPU_ZONE("RenderLayer");
 
-    const auto                       REALPOS = pLayer->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
-    const auto                       REALSIZ = pLayer->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+    const auto REALPOS = pLayer->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+    const auto REALSIZ = pLayer->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+
+    // layer motion is recorded event-driven (animation tick, position updater); the render-side pass keeps the expiry/decay
+    // damage cadence alive so trails shrink and clear instead of freezing on screen. Runs BEFORE the motion data is
+    // composed below, so this frame draws the fresh pair
+    if (!popups && !ctx.m_renderingSnapshot)
+        pLayer->sampleMotionBlurFrame(pLayer->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT));
 
     CSurfacePassElement::SRenderData renderdata = {pMonitor, time, REALPOS};
     renderdata.fadeAlpha                        = pLayer->alpha()[LS_ALPHA_FADE]->value();
@@ -1051,6 +1086,10 @@ void IHyprRenderer::renderLayer(CRenderContext& ctx, PHLLS pLayer, PHLMONITOR pM
     renderdata.h                                = REALSIZ.y;
     renderdata.pLS                              = pLayer;
     renderdata.blockBlurOptimization            = pLayer->m_layer == ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM || pLayer->m_layer == ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND;
+
+    // layer-shell slide/popin motion for the surface tree and its popups; stationary alpha fades never record a trail
+    static auto PMBLAYERS = CConfigValue<Config::INTEGER>("decoration:motion_blur:layers");
+    renderdata.motionBlur = (*PMBLAYERS && !ctx.m_renderingSnapshot) ? motionBlurRenderDataForSurfaces(pLayer->motionBlurState(), pMonitor) : SMotionBlurData{};
 
     renderdata.clipBox = CBox{0, 0, pMonitor->m_size.x, pMonitor->m_size.y}.scale(pMonitor->m_scale).round();
     if (renderdata.blur && pLayer->m_ruleApplicator->ignoreAlpha().hasValue()) {
@@ -1089,7 +1128,7 @@ void IHyprRenderer::renderLayer(CRenderContext& ctx, PHLLS pLayer, PHLMONITOR pM
     renderdata.surfaceCounter = 0;
     if (popups) {
         pLayer->popupHead()->breadthfirst(
-            [this, &ctx, &renderdata, workspaceScene](WP<Desktop::View::CPopup> popup, void* data) {
+            [this, &ctx, &renderdata, &pMonitor, workspaceScene](WP<Desktop::View::CPopup> popup, void* data) {
                 if (!shouldRenderPopup(popup, workspaceScene))
                     return;
 
@@ -1101,8 +1140,15 @@ void IHyprRenderer::renderLayer(CRenderContext& ctx, PHLLS pLayer, PHLMONITOR pM
                 if (SURF->m_current.size.x < 1 || SURF->m_current.size.y < 1)
                     return;
 
-                Vector2D pos           = popup->coordsRelativeToParent();
-                renderdata.localPos    = pos;
+                // layer-owned popups are tracked per node at their ACTUAL drawn rect (layer global pos + relative chain,
+                // incl. any animated offsets); the layer's trail must not stretch across them, and :popups gates recording
+                // and rendering
+                const Vector2D POS = popup->coordsRelativeToParent();
+                if (!ctx.m_renderingSnapshot)
+                    popup->sampleMotionBlurFrame({renderdata.pos + POS, popup->size()});
+                renderdata.motionBlur = motionBlurRenderDataForSurfaces(popup->motionBlurState(), pMonitor);
+
+                renderdata.localPos    = POS;
                 renderdata.texture     = SURF->m_current.texture;
                 renderdata.surface     = SURF;
                 renderdata.mainSurface = false;
@@ -3091,6 +3137,20 @@ void IHyprRenderer::damageBox(const CBox& box, bool skipFrameSchedule) {
         LOG(Log::DEBUG, "Damage: Box: xy: {}, {} wh: {}, {}", box.x, box.y, box.w, box.h);
 }
 
+void IHyprRenderer::damageMotionBlurBox(const CBox& box) {
+    damageBox(box);
+
+    // Render-side sampling happens while constructing the pass, after beginRender captured the output damage. Include
+    // both the old and new trail footprints in this draw as well as scheduling their next-frame cleanup.
+    const auto MONITOR = m_context.m_data.pMonitor.lock();
+    if (m_context.m_renderingSnapshot || !MONITOR || !MONITOR->m_renderingActive)
+        return;
+
+    const CBox LOCAL = box.copy().translate(-MONITOR->m_position).scale(MONITOR->m_scale).round();
+    m_context.m_data.damage.add(LOCAL);
+    m_context.m_data.finalDamage.add(LOCAL);
+}
+
 void IHyprRenderer::damageBox(const int& x, const int& y, const int& w, const int& h) {
     CBox box = {x, y, w, h};
     damageBox(box);
@@ -3652,6 +3712,21 @@ void IHyprRenderer::renderFadeouts(CRenderContext& ctx, PHLMONITOR monitor, Desk
         data.blurShapeInvalid      = true;
         data.ignoreAlpha           = EFFECTS.textureBlur.ignoreAlpha;
         data.blockBlurOptimization = EFFECTS.textureBlur.blockBlurOptimization;
+
+        // window_close: the close animation's recorded trail sampled over the full snapshot mapping; per-frame records of the
+        // fadeout geometry happen inside motionBlur()
+        if (auto fadeoutMotionBlur = fadeout->motionBlur()) {
+            fadeoutMotionBlur->previous.scale(monitor->m_scale);
+            fadeoutMotionBlur->current.scale(monitor->m_scale);
+            // the fadeout reports the ORIGINAL content crop inside the static snapshot (monitor-local logical); scaled to
+            // snapshot FB pixels here so the shader samples the un-animated source while prev/current follow the animation
+            fadeoutMotionBlur->source.scale(monitor->m_scale);
+            fadeoutMotionBlur->sourceTexSize = FB->getTexture()->m_size;
+
+            data.motionBlur = *fadeoutMotionBlur;
+            data.box        = data.motionBlur.extents().round();
+            damageMotionBlurBox(data.box.copy().scale(1.F / monitor->m_scale).translate(monitor->m_position).expand(4.F));
+        }
 
         addPassElement(ctx, makeUnique<CTexPassElement>(std::move(data)));
     }

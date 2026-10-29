@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "Window.hpp"
+#include "WindowPresentation.hpp"
 #include "../../../managers/input/InputManager.hpp"
 #include "../../../render/Renderer.hpp"
 #include "../../../render/transformer/MotionBlurTransformer.hpp"
@@ -46,10 +47,97 @@ void CWindowEffectsController::damageMotionBlur(bool allowStale) const {
 
     CBox damage = STATE->extents();
     damage.expand(4.F);
-    g_pHyprRenderer->damageBox(damage);
+    g_pHyprRenderer->damageMotionBlurBox(damage);
 }
 
-void CWindowEffectsController::recordMotionBlur(const CBox& previous, const CBox& current) {
+CBox CWindowEffectsController::motionBlurRecordBox() const {
+    return MotionBlur::composedRecordBox(m_window.getFullWindowBoundingBox(), m_window.m_workspace ? m_window.m_workspace->m_renderOffset->value() : Vector2D{},
+                                         m_window.presentation().floatingOffset(), static_cast<bool>(m_window.m_state & Desktop::View::WINDOW_STATE_PINNED));
+}
+
+std::optional<MotionBlur::SRecordedMotion> CWindowEffectsController::motionBlurRecorded() const {
+    const auto MOTIONBLUR = motionBlurTransformer();
+    if (!MOTIONBLUR)
+        return std::nullopt;
+
+    return MOTIONBLUR->recorded();
+}
+
+void CWindowEffectsController::sampleMotionBlurFrame(const CBox& composedGlobalBox) {
+    static auto PMBWORKSPACES = CConfigValue<Config::INTEGER>("decoration:motion_blur:workspaces");
+    if (!*PMBWORKSPACES)
+        return;
+
+    // pinned windows never follow workspace motion
+    if (static_cast<bool>(m_window.m_state & Desktop::View::WINDOW_STATE_PINNED))
+        return;
+
+    if (!Render::CMotionBlurTransformer::shouldEnable(m_window.m_self.lock()))
+        return;
+
+    // the sampler owns ONLY the workspace render offset step: geometry and floating-offset motion belong to the event-driven
+    // records (animation tick, drags) and never leak into the workspace trail
+    const Vector2D OFFSETNOW   = m_window.m_workspace ? m_window.m_workspace->m_renderOffset->value() : Vector2D{};
+    const Vector2D OFFSETDELTA = OFFSETNOW - m_motionBlurLastOffset;
+    m_motionBlurLastOffset     = OFFSETNOW;
+
+    if (OFFSETDELTA == Vector2D{}) {
+        // workspace idle: drop inert sample-only transformers (settled anchors or fully expired trails) so ordinary windows
+        // stop paying the isolated transformed-pass cost; live or still-decaying trails are kept
+        if (const auto MOTIONBLUR = motionBlurTransformer(); MOTIONBLUR && MOTIONBLUR->expired()) {
+            const auto RECORDED = MOTIONBLUR->recorded();
+            if (!RECORDED || RECORDED->previous == RECORDED->current)
+                resetMotionBlur();
+        }
+        return;
+    }
+
+    // sampling state comes from the raw recorded pair, NOT the rendered trail: state() collapses settled (equal-box)
+    // records to nullopt, which would keep the sampler re-anchoring forever instead of ever starting the trail
+    const auto MOTIONBLUR = motionBlurTransformer();
+    const auto RECORDED   = MOTIONBLUR ? MOTIONBLUR->recorded() : std::nullopt;
+    const auto PMONITOR   = m_window.m_monitor.lock();
+    if (!PMONITOR)
+        return;
+
+    const CBox BOUNDS = {PMONITOR->m_position, PMONITOR->m_size};
+    const auto DECISION =
+        MotionBlur::sampleDecision(RECORDED ? std::optional<CBox>{RECORDED->current} : std::nullopt, !MOTIONBLUR || MOTIONBLUR->expired(), composedGlobalBox, BOUNDS);
+
+    if (DECISION == MotionBlur::ESampleDecision::SKIP)
+        return;
+
+    // below the invisible-step threshold an anchor is cheaper than churning the transformer
+    constexpr double MIN_EDGE_DELTA_PX = 2.0;
+    const bool       RECORD = DECISION == MotionBlur::ESampleDecision::RECORD && std::max(std::abs(OFFSETDELTA.x), std::abs(OFFSETDELTA.y)) * PMONITOR->m_scale > MIN_EDGE_DELTA_PX;
+
+    // the recorded boxes are about to move (or collapse onto the anchor): clear the old footprint first
+    damageMotionBlur(true);
+
+    // translate mutates its receiver, hence the copy; the pair keeps the total screen displacement of the workspace step
+    const CBox PREVIOUS = RECORD ? composedGlobalBox.copy().translate(-OFFSETDELTA) : composedGlobalBox;
+
+    auto       TARGET = MOTIONBLUR;
+    if (!TARGET)
+        TARGET = m_transformers->emplace<Render::CMotionBlurTransformer>(m_window.m_self);
+
+    if (!TARGET)
+        return;
+
+    TARGET->record(PREVIOUS, composedGlobalBox);
+
+    if (RECORD)
+        damageMotionBlur();
+}
+
+void CWindowEffectsController::recordMotionBlur(const CBox& previous, const CBox& current, eWindowUpdateSource source) {
+    // window animation trails are opt-in: animation-tick records are skipped entirely when the toggle is off
+    if (source == WINDOW_UPDATE_ANIMATION) {
+        static auto PMBWINDOWANIMS = CConfigValue<Config::INTEGER>("decoration:motion_blur:window_animations");
+        if (!*PMBWINDOWANIMS)
+            return;
+    }
+
     if (!Render::CMotionBlurTransformer::shouldEnable(m_window.m_self.lock())) {
         resetMotionBlur();
         return;
@@ -115,8 +203,9 @@ void CWindowEffectsController::settleMotionBlur() {
     if (!MOTIONBLUR)
         return;
 
-    // snap the decay target onto the actual final box so the lingering trail keeps tracking the settled window
-    MOTIONBLUR->reanchor(m_window.getFullWindowBoundingBox());
+    // snap the decay target onto the actual final record box (workspace offset baked in) so the lingering trail keeps tracking
+    // the settled window
+    MOTIONBLUR->reanchor(motionBlurRecordBox());
     MOTIONBLUR->settle();
 }
 
@@ -158,7 +247,7 @@ void CWindowEffectsController::reset() {
 }
 
 void CWindowEffectsController::onPositionUpdate(const CBox& previous, const CBox& current, eWindowUpdateSource source) {
-    recordMotionBlur(previous, current);
+    recordMotionBlur(previous, current, source);
 
     if (previous == current)
         return;

@@ -25,14 +25,15 @@ CMotionBlurTransformer::~CMotionBlurTransformer() {
 }
 
 bool CMotionBlurTransformer::shouldEnable(PHLWINDOW window) {
-    static auto PMBENABLED  = CConfigValue<Config::INTEGER>("decoration:motion_blur:enabled");
-    static auto PMBSAMPLES  = CConfigValue<Config::INTEGER>("decoration:motion_blur:samples");
-    static auto PMBSTRENGTH = CConfigValue<Config::FLOAT>("decoration:motion_blur:strength");
+    static auto PMBENABLED    = CConfigValue<Config::INTEGER>("decoration:motion_blur:enabled");
+    static auto PMBSAMPLES    = CConfigValue<Config::INTEGER>("decoration:motion_blur:samples");
+    static auto PMBSTRENGTH   = CConfigValue<Config::FLOAT>("decoration:motion_blur:strength");
+    static auto PMBFULLSCREEN = CConfigValue<Config::INTEGER>("decoration:motion_blur:fullscreen");
 
     if (!window)
         return false;
 
-    return *PMBENABLED && *PMBSAMPLES > 1 && *PMBSTRENGTH > 0 && !Fullscreen::controller()->isFullscreen(window);
+    return MotionBlur::eligible(*PMBENABLED, *PMBSAMPLES, *PMBSTRENGTH, Fullscreen::controller()->isFullscreen(window), *PMBFULLSCREEN);
 }
 
 std::chrono::milliseconds CMotionBlurTransformer::decayTimeout() {
@@ -141,15 +142,33 @@ std::optional<MotionBlur::SState> CMotionBlurTransformer::state(bool allowStale)
     if (!allowStale && !shouldEnable(PWINDOW))
         return std::nullopt;
 
-    const Vector2D RENDEROFFSET = ((PWINDOW->m_state & Desktop::View::WINDOW_STATE_PINNED) || !PWINDOW->m_workspace ? Vector2D{} : PWINDOW->m_workspace->m_renderOffset->value()) +
-        PWINDOW->presentation().floatingOffset();
-    return stateForOffset(RENDEROFFSET, allowStale);
+    // records are unified screen-space boxes: the workspace render offset and the floating offset are baked in at record time,
+    // so no render offset is re-added here
+    return stateForOffset({}, allowStale);
 }
 
 std::optional<MotionBlur::SState> CMotionBlurTransformer::stateForOffset(const Vector2D& renderOffset, bool allowStale) const {
-    static auto PMBSAMPLES = CConfigValue<Config::INTEGER>("decoration:motion_blur:samples");
+    static auto PMBSAMPLES  = CConfigValue<Config::INTEGER>("decoration:motion_blur:samples");
     static auto PMBSTRENGTH = CConfigValue<Config::FLOAT>("decoration:motion_blur:strength");
     return m_motionBlur.state(std::clamp(sc<int>(*PMBSAMPLES), 2, 64), renderOffset, allowStale, *PMBSTRENGTH, Time::steadyNow(), decayTimeout());
+}
+
+std::optional<MotionBlur::SRecordedMotion> CMotionBlurTransformer::recorded() const {
+    return m_motionBlur.recorded();
+}
+
+std::optional<MotionBlur::SState> CMotionBlurTransformer::trackerState(const MotionBlur::CTracker& tracker, bool allowStale) {
+    static auto PENABLED = CConfigValue<Config::INTEGER>("decoration:motion_blur:enabled");
+
+    // parity with the transformed-window path: the stale path is damage clearing only and must report the full recorded
+    // footprint even when enablement has flipped, so the final clear still erases the whole trail
+    if (!allowStale && !*PENABLED)
+        return std::nullopt;
+
+    static auto PMBSAMPLES  = CConfigValue<Config::INTEGER>("decoration:motion_blur:samples");
+    static auto PMBSTRENGTH = CConfigValue<Config::FLOAT>("decoration:motion_blur:strength");
+
+    return tracker.state(std::clamp(sc<int>(*PMBSAMPLES), 2, 64), {}, allowStale, *PMBSTRENGTH, Time::steadyNow(), decayTimeout());
 }
 
 void CMotionBlurTransformer::armExpiryTimer() {

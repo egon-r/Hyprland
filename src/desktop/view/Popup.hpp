@@ -13,6 +13,8 @@
 #include "../../helpers/signal/Signal.hpp"
 #include "../../helpers/memory/Memory.hpp"
 #include "../../helpers/AnimatedVariable.hpp"
+#include "../../helpers/MotionBlur.hpp"
+#include "../../helpers/signal/Signal.hpp"
 #include "../../render/Framebuffer.hpp"
 
 namespace Desktop::View {
@@ -74,6 +76,12 @@ namespace Desktop::View {
 
         bool                                                      inert() const;
 
+        // motion blur: per-node screen-space sampling at render time; alpha-only fades never record a trail
+        std::optional<MotionBlur::SState> motionBlurState(bool allowStale = false) const;
+        void                              sampleMotionBlurFrame(const CBox& currentGlobalBox);
+        void                              damageMotionBlur(bool allowStale = false) const;
+        void                              resetMotionBlur();
+
         // will also loop over this node
         void                      breadthfirst(std::function<void(SP<Desktop::View::CPopup>, void*)> fn, void* data);
         SP<Desktop::View::CPopup> at(const Vector2D& globalCoords, bool allowsInput = false);
@@ -113,6 +121,8 @@ namespace Desktop::View {
 
         // fade in/out
         Desktop::Types::CMultiAVarContainer<float, std::underlying_type_t<ePopupAlpha>> m_alpha;
+
+        MotionBlur::CTracker                                                            m_motionBlur;
 
         //
         std::vector<SP<Desktop::View::CPopup>> m_children;

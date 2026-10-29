@@ -467,6 +467,8 @@ void CWindow::moveToWorkspace(PHLWORKSPACE pWorkspace) {
         m_presentation->setMonitorMovedFrom(OLDWORKSPACE ? OLDWORKSPACE->monitorID() : -1);
     }
 
+    // a workspace reassignment teleports the window in screen space: drop any recorded trail instead of smearing the jump
+    effects().resetMotionBlur();
     m_workspace = pWorkspace;
     updateFullscreenInputState();
     *m_presentation->alpha(WINDOW_ALPHA_FULLSCREEN) = isBlockedByFullscreen() ? 0.F : 1.F;

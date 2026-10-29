@@ -1,5 +1,6 @@
 #include "Fadeout.hpp"
 #include "../../render/scene/SceneSelection.hpp"
+#include "../../render/pass/TexPassElement.hpp"
 
 using namespace Desktop;
 using namespace Desktop::View;
@@ -44,4 +45,8 @@ SFadeoutSource IFadeout::source() const {
         case FADEOUT_PLANE_LAYER_OVERLAY: return {.type = eFadeoutSource::LAYER};
         default: return {};
     }
+}
+
+std::optional<SMotionBlurData> IFadeout::motionBlur() const {
+    return std::nullopt;
 }

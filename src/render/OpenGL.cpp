@@ -1425,8 +1425,6 @@ WP<CShader> CHyprOpenGLImpl::renderToFBInternal(CRenderContext& ctx, SP<ITexture
     static const auto  PENABLECM = CConfigValue<Config::INTEGER>("render:cm_enabled");
     static auto        PBLEND    = CConfigValue<Config::INTEGER>("render:use_shader_blur_blend");
 
-    auto&              m_renderData = ctx.m_data;
-
     float              alpha = std::clamp(data.a, 0.f, 1.f);
 
     WP<CShader>        shader;
@@ -1591,8 +1589,21 @@ WP<CShader> CHyprOpenGLImpl::renderToFBInternal(CRenderContext& ctx, SP<ITexture
         CBox motionPrev   = data.motionBlur.previous;
         CBox motionCurr   = data.motionBlur.current;
         CBox motionSource = data.motionBlur.source;
-        m_renderData.renderModif.applyToBox(motionPrev);
-        m_renderData.renderModif.applyToBox(motionCurr);
+        ctx.m_data.renderModif.applyToBox(motionPrev);
+        ctx.m_data.renderModif.applyToBox(motionCurr);
+        // previous/current live in monitor space and ride the composed output transforms; a texture-space source is a
+        // raw crop in texture pixels (the surface's UV rect) and maps straight into the sampled texture instead
+        if (!data.motionBlur.sourceInTextureSpace)
+            ctx.m_data.renderModif.applyToBox(motionSource);
+
+        motionPrev.transform(Math::wlTransformToHyprutils(Math::invertTransform(ctx.m_data.pMonitor->m_transform)), ctx.m_data.pMonitor->m_transformedSize.x,
+                             ctx.m_data.pMonitor->m_transformedSize.y);
+        motionCurr.transform(Math::wlTransformToHyprutils(Math::invertTransform(ctx.m_data.pMonitor->m_transform)), ctx.m_data.pMonitor->m_transformedSize.x,
+                             ctx.m_data.pMonitor->m_transformedSize.y);
+        if (!data.motionBlur.sourceInTextureSpace) {
+            motionSource.transform(Math::wlTransformToHyprutils(Math::invertTransform(ctx.m_data.pMonitor->m_transform)), ctx.m_data.pMonitor->m_transformedSize.x,
+                                   ctx.m_data.pMonitor->m_transformedSize.y);
+        }
 
         shader->setUniformFloat4(SHADER_MOTION_PREV_BOX, motionPrev.x, motionPrev.y, motionPrev.w, motionPrev.h);
         shader->setUniformFloat4(SHADER_MOTION_CURR_BOX, motionCurr.x, motionCurr.y, motionCurr.w, motionCurr.h);
