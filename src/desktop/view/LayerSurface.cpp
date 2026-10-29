@@ -107,6 +107,12 @@ void CLayerSurface::sampleMotionBlurFrame(const CBox& composedGlobalBox) {
     // shrinking trail until it expires. Real spatial motion records here too (silent commits that move the layer), while
     // expiry-anchored restarts keep arrange teleports from smearing across dead trails
     damageMotionBlur(true);
+    // layer animations are recorded event-driven (animation tick); a matching current here means this sample caught up
+    // with the event record, not that motion settled. The shared recordFrame's no-decay path would collapse the pair to
+    // current/current and erase the animation trail before it ever draws — retain the recorded pair until the bounded
+    // expiry check above clears it
+    if (const auto LAST = m_motionBlur.recorded(); LAST && LAST->current == composedGlobalBox)
+        return;
 
     if (MotionBlur::recordFrame(m_motionBlur, composedGlobalBox, Time::steadyNow(), DECAY))
         damageMotionBlur();
