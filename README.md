@@ -82,6 +82,10 @@ easy IPC, much more QoL stuff than other compositors and more...
 > reports this source commit instead of the older embedded `db28a35e` identity. No new rendering or
 > live verification was performed — the earlier UI checks do not verify the new rendering paths
 > visually, and the workstation remains in use.
+> A follow-up correctness fix keeps event-recorded layer animation pairs intact when the render-side
+> sample catches up at zero decay (previously the pair collapsed to current/current and the mapped
+> layer animation trail never rendered); the retained trail still clears on the bounded expiry. The
+> full unit-test suite (299 tests) still passes.
 >
 > This repository is a **source/build artifact only**. The working installation under
 > `~/.local/opt/hyprland-motion-blur` is preserved untouched and keeps running the `db28a35e`
