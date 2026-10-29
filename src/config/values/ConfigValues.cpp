@@ -340,6 +340,8 @@ std::vector<SP<IValue>> Values::getConfigValues() {
         MS<Float>("decoration:wobble:intensity", "wobble deformation impulse multiplier", 0.2, {.min = 0, .max = 2}),
         MS<Float>("decoration:wobble:value_epsilon", "position epsilon below which wobble is considered stable", 0.25, {.min = 0, .max = 100}),
         MS<Float>("decoration:wobble:velocity_epsilon", "velocity epsilon below which wobble is considered stable", 2, {.min = 0, .max = 1000}),
+        MS<Float>("decoration:motion_blur:strength", "smear length multiplier for motion blur (2 doubles the smear length, 0 disables it)", 1,
+                  {.min = 0, .max = 10, .refresh = Supplementary::REFRESH_WINDOW_STATES}),
 
         /*
          * animations:

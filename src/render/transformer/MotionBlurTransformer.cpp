@@ -25,13 +25,14 @@ CMotionBlurTransformer::~CMotionBlurTransformer() {
 }
 
 bool CMotionBlurTransformer::shouldEnable(PHLWINDOW window) {
-    static auto PMBENABLED = CConfigValue<Config::INTEGER>("decoration:motion_blur:enabled");
-    static auto PMBSAMPLES = CConfigValue<Config::INTEGER>("decoration:motion_blur:samples");
+    static auto PMBENABLED  = CConfigValue<Config::INTEGER>("decoration:motion_blur:enabled");
+    static auto PMBSAMPLES  = CConfigValue<Config::INTEGER>("decoration:motion_blur:samples");
+    static auto PMBSTRENGTH = CConfigValue<Config::FLOAT>("decoration:motion_blur:strength");
 
     if (!window)
         return false;
 
-    return *PMBENABLED && *PMBSAMPLES > 1 && !Fullscreen::controller()->isFullscreen(window);
+    return *PMBENABLED && *PMBSAMPLES > 1 && *PMBSTRENGTH > 0 && !Fullscreen::controller()->isFullscreen(window);
 }
 
 SWindowTransformBuffer CMotionBlurTransformer::transform(CRenderContext& ctx, const SWindowTransformBuffer& in, const SWindowTransformContext&) {
@@ -123,7 +124,8 @@ std::optional<MotionBlur::SState> CMotionBlurTransformer::state(bool allowStale)
 
 std::optional<MotionBlur::SState> CMotionBlurTransformer::stateForOffset(const Vector2D& renderOffset, bool allowStale) const {
     static auto PMBSAMPLES = CConfigValue<Config::INTEGER>("decoration:motion_blur:samples");
-    return m_motionBlur.state(std::clamp(sc<int>(*PMBSAMPLES), 2, 64), renderOffset, allowStale);
+    static auto PMBSTRENGTH = CConfigValue<Config::FLOAT>("decoration:motion_blur:strength");
+    return m_motionBlur.state(std::clamp(sc<int>(*PMBSAMPLES), 2, 64), renderOffset, allowStale, *PMBSTRENGTH);
 }
 
 void CMotionBlurTransformer::armExpiryTimer() {
