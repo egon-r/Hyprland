@@ -7,6 +7,8 @@
 
 #include <optional>
 
+struct SMotionBlurData;
+
 namespace Render {
     class IFramebuffer;
 }
@@ -49,15 +51,16 @@ namespace Desktop {
       public:
         virtual ~IFadeout() = default;
 
-        virtual PHLMONITORREF         monitor() const = 0;
-        PHLWORKSPACEREF               workspace() const;
-        virtual eFadeoutPlane         plane() const  = 0;
-        virtual int                   zIndex() const = 0;
-        SP<Render::IFramebuffer>      framebuffer() const;
-        virtual CBox                  renderBox() const = 0;
-        virtual float                 alpha() const     = 0;
-        virtual bool                  done() const      = 0;
-        virtual SFadeoutRenderEffects effects() const;
+        virtual PHLMONITORREF                  monitor() const = 0;
+        PHLWORKSPACEREF                        workspace() const;
+        virtual eFadeoutPlane                  plane() const  = 0;
+        virtual int                            zIndex() const = 0;
+        SP<Render::IFramebuffer>               framebuffer() const;
+        virtual CBox                           renderBox() const = 0;
+        virtual float                          alpha() const     = 0;
+        virtual bool                           done() const      = 0;
+        virtual SFadeoutRenderEffects          effects() const;
+        virtual std::optional<SMotionBlurData> motionBlur() const;
 
       protected:
         IFadeout() = default;

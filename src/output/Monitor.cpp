@@ -1869,7 +1869,9 @@ uint32_t CMonitor::isSolitaryBlocked(bool full) {
     }
 
     if (PCANDIDATE->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT) != m_size || PCANDIDATE->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT) != m_position ||
-        PCANDIDATE->positionAnimation()->isBeingAnimated() || PCANDIDATE->sizeAnimation()->isBeingAnimated()) {
+        PCANDIDATE->positionAnimation()->isBeingAnimated() || PCANDIDATE->sizeAnimation()->isBeingAnimated() ||
+        // an opted-in live motion trail keeps rendering a smear past the geometry: direct scanout would drop it
+        (PCANDIDATE->motionBlurState().has_value())) {
         reasons |= SC_TRANSFORM;
         if (!full)
             return reasons;
@@ -2062,6 +2064,12 @@ uint16_t CMonitor::isDSBlocked(bool full) {
     const auto PCANDIDATE = m_solitaryClient.lock();
     if (!PCANDIDATE) {
         reasons |= DS_BLOCK_CANDIDATE;
+        return reasons;
+    }
+
+    // an opted-in live motion trail keeps rendering a smear past the committed buffer: direct scanout would drop it
+    if (PCANDIDATE->motionBlurState().has_value()) {
+        reasons |= DS_BLOCK_SURFACE;
         return reasons;
     }
 

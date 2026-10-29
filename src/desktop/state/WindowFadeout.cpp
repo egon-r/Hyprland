@@ -9,6 +9,7 @@
 #include "../../output/Monitor.hpp"
 #include "../../render/Framebuffer.hpp"
 #include "../../render/Renderer.hpp"
+#include "../../render/transformer/MotionBlurTransformer.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -82,13 +83,24 @@ SP<CWindowFadeout> CWindowFadeout::create(PHLWINDOW window, SP<Render::IFramebuf
     Animation::mgr()->createAnimation(sourceAlpha, fadeout->m_alpha, Config::animationTree()->getAnimationPropertyConfig("fadeOut"), AVARDAMAGE_NONE);
 
     const WP<CWindowFadeout> WEAK = fadeout;
+
+    // seed the close-anim trail by carrying the dying window's rendered displacement onto the fadeout's own animated
+    // content hull, so the smear survives the close without mixing decorated-hull and content-box geometry; the fadeout
+    // samples its own animated box every rendered frame afterwards
+    static auto PCLOSE = CConfigValue<Config::INTEGER>("decoration:motion_blur:window_close");
+    if (*PCLOSE) {
+        const CBox FROM  = {ANIMCTX.pos.from, ANIMCTX.size.from};
+        const auto TRAIL = window->motionBlurState(true);
+        if (TRAIL) {
+            const Vector2D DELTA = TRAIL->current.pos() - TRAIL->previous.pos();
+            fadeout->m_motionBlur.record(FROM.copy().translate(-DELTA), FROM);
+        } else
+            MotionBlur::recordFrame(fadeout->m_motionBlur, FROM, Time::steadyNow(), Render::CMotionBlurTransformer::decayTimeout());
+    }
+
     fadeout->m_realPosition->setUpdateCallback([WEAK](auto) { damageWeakFadeout(WEAK); });
     fadeout->m_realSize->setUpdateCallback([WEAK](auto) { damageWeakFadeout(WEAK); });
     fadeout->m_alpha->setUpdateCallback([WEAK](auto) { damageWeakFadeout(WEAK); });
-
-    fadeout->m_realPosition->setValueAndWarp(ANIMCTX.pos.from);
-    fadeout->m_realSize->setValueAndWarp(ANIMCTX.size.from);
-    fadeout->m_alpha->setValueAndWarp(sourceAlpha);
 
     *fadeout->m_realPosition = ANIMCTX.pos.to;
     *fadeout->m_realSize     = ANIMCTX.size.to;
@@ -150,4 +162,32 @@ SFadeoutRenderEffects CWindowFadeout::effects() const {
     }
 
     return effects;
+}
+
+std::optional<SMotionBlurData> CWindowFadeout::motionBlur() const {
+    static auto PENABLED = CConfigValue<Config::INTEGER>("decoration:motion_blur:enabled");
+    static auto PCLOSE   = CConfigValue<Config::INTEGER>("decoration:motion_blur:window_close");
+    const auto  MONITOR  = m_monitor.lock();
+    if (!*PENABLED || !*PCLOSE || !MONITOR) {
+        // toggled off mid-fade: drop any lingering trail; the fadeout's update callbacks keep the monitor damaged
+        m_motionBlur.reset();
+        return std::nullopt;
+    }
+
+    // per-frame sampling over the close slide/scale; alpha-only settles decay the trail out naturally
+    MotionBlur::recordFrame(m_motionBlur, CBox{m_realPosition->value(), m_realSize->value()}, Time::steadyNow(), Render::CMotionBlurTransformer::decayTimeout());
+
+    const auto STATE = Render::CMotionBlurTransformer::trackerState(m_motionBlur, false);
+    if (!STATE)
+        return std::nullopt;
+
+    SMotionBlurData mb;
+    mb.enabled  = true;
+    mb.previous = STATE->previous.copy().translate(-MONITOR->m_position);
+    mb.current  = STATE->current.copy().translate(-MONITOR->m_position);
+    mb.samples  = STATE->samples;
+    // the snapshot FB holds the ORIGINAL monitor image: the shader must sample the original content crop (monitor-local
+    // logical, scaled to FB pixels by renderFadeouts), while prev/current are the animated destination rects
+    mb.source = CBox{m_sourcePos, m_sourceSize};
+    return mb;
 }

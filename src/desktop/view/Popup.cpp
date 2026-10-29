@@ -13,6 +13,7 @@
 #include "../../managers/input/InputManager.hpp"
 #include "../../managers/eventLoop/EventLoopManager.hpp"
 #include "../../render/Renderer.hpp"
+#include "../../render/transformer/MotionBlurTransformer.hpp"
 #include "../../render/OpenGL.hpp"
 #include "../../output/Monitor.hpp"
 #include "../../state/MonitorState.hpp"
@@ -169,6 +170,63 @@ void CPopup::onNewPopup(SP<CXDGPopupResource> popup) {
     Log::logger->log(Log::DEBUG, "New popup at {:x}", rc<uintptr_t>(this));
 }
 
+std::optional<MotionBlur::SState> CPopup::motionBlurState(bool allowStale) const {
+    if (!allowStale) {
+        // recording/rendering gates; the stale (damage-clearing) path must see the recorded footprint even when toggled off
+        static auto PENABLED = CConfigValue<Config::INTEGER>("decoration:motion_blur:enabled");
+        static auto PPOPS    = CConfigValue<Config::INTEGER>("decoration:motion_blur:popups");
+        if (!*PENABLED || !*PPOPS)
+            return std::nullopt;
+    }
+
+    return Render::CMotionBlurTransformer::trackerState(m_motionBlur, allowStale);
+}
+
+void CPopup::sampleMotionBlurFrame(const CBox& currentGlobalBox) {
+    static auto PENABLED = CConfigValue<Config::INTEGER>("decoration:motion_blur:enabled");
+    static auto PPOPS    = CConfigValue<Config::INTEGER>("decoration:motion_blur:popups");
+    if (!*PENABLED || !*PPOPS) {
+        // toggled off: clear a lingering trail the next time this popup renders, then stop
+        if (m_motionBlur.recorded()) {
+            damageMotionBlur(true);
+            m_motionBlur.reset();
+        }
+        return;
+    }
+
+    if (!g_pHyprRenderer)
+        return;
+
+    const auto DECAY = Render::CMotionBlurTransformer::decayTimeout();
+
+    if (m_motionBlur.recorded() && m_motionBlur.expired(Time::steadyNow(), DECAY)) {
+        // the trail finished: clear its last footprint once and stop the damage cadence (no unbounded timer)
+        damageMotionBlur(true);
+        m_motionBlur.reset();
+        return;
+    }
+
+    // damage the old hull BEFORE the record overwrites the pair; the damage drives the frames that keep repainting the
+    // shrinking trail until it expires
+    damageMotionBlur(true);
+
+    if (MotionBlur::recordFrame(m_motionBlur, currentGlobalBox, Time::steadyNow(), DECAY))
+        damageMotionBlur();
+}
+
+void CPopup::damageMotionBlur(bool allowStale) const {
+    const auto STATE = motionBlurState(allowStale);
+    if (!STATE || !g_pHyprRenderer)
+        return;
+
+    CBox damage = STATE->extents();
+    g_pHyprRenderer->damageMotionBlurBox(damage);
+}
+
+void CPopup::resetMotionBlur() {
+    m_motionBlur.reset();
+}
+
 void CPopup::onDestroy() {
     m_inert = true;
 
@@ -267,6 +325,11 @@ void CPopup::onUnmap() {
     g_pHyprRenderer->damageBox(box);
 
     m_lastSize = MAX_DAMAGE_SIZE;
+
+    // final trail damage BEFORE the tracker resets; mapped again later means fresh motion, never a stale trail
+    if (g_pHyprRenderer)
+        damageMotionBlur(true);
+    m_motionBlur.reset();
 
     const auto SNAPSHOT    = g_pHyprRenderer->makeSnapshotFB(m_self);
     const auto SOURCEALPHA = m_alpha.get(POPUP_ALPHA_FADE)->value();

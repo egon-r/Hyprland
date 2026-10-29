@@ -1,19 +1,21 @@
 #pragma once
 
 #include "Fadeout.hpp"
+#include "../../helpers/MotionBlur.hpp"
 
 namespace Desktop {
     class CWindowFadeout final : public IFadeout {
       public:
-        static SP<CWindowFadeout>     create(PHLWINDOW window, SP<Render::IFramebuffer> snapshot, float sourceAlpha);
+        static SP<CWindowFadeout>              create(PHLWINDOW window, SP<Render::IFramebuffer> snapshot, float sourceAlpha);
 
-        virtual PHLMONITORREF         monitor() const override;
-        virtual eFadeoutPlane         plane() const override;
-        virtual int                   zIndex() const override;
-        virtual CBox                  renderBox() const override;
-        virtual float                 alpha() const override;
-        virtual bool                  done() const override;
-        virtual SFadeoutRenderEffects effects() const override;
+        virtual PHLMONITORREF                  monitor() const override;
+        virtual eFadeoutPlane                  plane() const override;
+        virtual int                            zIndex() const override;
+        virtual CBox                           renderBox() const override;
+        virtual float                          alpha() const override;
+        virtual bool                           done() const override;
+        virtual SFadeoutRenderEffects          effects() const override;
+        virtual std::optional<SMotionBlurData> motionBlur() const override;
 
       private:
         CWindowFadeout() = default;
@@ -29,5 +31,8 @@ namespace Desktop {
         bool              m_blurXray      = false;
         int               m_rounding      = 0;
         float             m_roundingPower = 2.F;
+
+        // per-frame sampled trail of the close animation over the full snapshot mapping; mutated in a const sampler
+        mutable MotionBlur::CTracker m_motionBlur;
     };
 }

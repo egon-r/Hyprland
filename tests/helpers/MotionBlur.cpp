@@ -325,3 +325,126 @@ TEST(MotionBlurTracker, reanchorPreservesSizeDeltaOnMinorResize) {
     ASSERT_TRUE(HALFWAY.has_value());
     EXPECT_DOUBLE_EQ(HALFWAY->previous.w, 104);
 }
+
+// --- composedRecordBox: unified screen-space recording ---
+
+TEST(MotionBlurComposedRecordBox, bakesWorkspaceOffsetAndFloatingOffset) {
+    const CBox LAYOUT = {100, 100, 200, 100};
+    const CBox BOX    = composedRecordBox(LAYOUT, Vector2D{-960, 0}, Vector2D{5, 10}, false);
+
+    EXPECT_DOUBLE_EQ(BOX.x, 100 - 960 + 5);
+    EXPECT_DOUBLE_EQ(BOX.y, 100 + 10);
+    EXPECT_DOUBLE_EQ(BOX.w, 200);
+    EXPECT_DOUBLE_EQ(BOX.h, 100);
+}
+
+TEST(MotionBlurComposedRecordBox, pinnedWindowsDropWorkspaceOffset) {
+    const CBox LAYOUT = {100, 100, 200, 100};
+    const CBox BOX    = composedRecordBox(LAYOUT, Vector2D{-960, 0}, Vector2D{5, 10}, true);
+
+    // pinned windows do not follow workspace motion: only the floating offset survives
+    EXPECT_DOUBLE_EQ(BOX.x, 105);
+    EXPECT_DOUBLE_EQ(BOX.y, 110);
+}
+
+TEST(MotionBlurComposedRecordBox, zeroOffsetsPreserveLayoutGeometry) {
+    const CBox LAYOUT = {100, 100, 200, 100};
+
+    EXPECT_EQ(composedRecordBox(LAYOUT, Vector2D{}, Vector2D{}, false), LAYOUT);
+}
+
+// --- sampleDecision: render-side workspace motion sampling ---
+
+TEST(MotionBlurSampleDecision, anchorsWithoutTrail) {
+    const CBox BOUNDS = {0, 0, 1920, 1080};
+
+    EXPECT_EQ(sampleDecision(std::nullopt, true, CBox{100, 100, 100, 100}, BOUNDS), ESampleDecision::ANCHOR);
+}
+
+TEST(MotionBlurSampleDecision, skipsWhenCurrentUnchanged) {
+    const CBox BOUNDS = {0, 0, 1920, 1080};
+    const CBox BOX    = {100, 100, 100, 100};
+
+    // the event-driven record already wrote this exact box within the same frame
+    EXPECT_EQ(sampleDecision(BOX, false, BOX, BOUNDS), ESampleDecision::SKIP);
+}
+
+TEST(MotionBlurSampleDecision, anchorsExpiredOrOccludedTrail) {
+    const CBox BOUNDS   = {0, 0, 1920, 1080};
+    const CBox PREVIOUS = {100, 100, 100, 100};
+    const CBox CURRENT  = {120, 100, 100, 100};
+
+    // stale beyond the cutoff (occlusion gap, toggle flip): never smear the accumulated jump
+    EXPECT_EQ(sampleDecision(PREVIOUS, true, CURRENT, BOUNDS), ESampleDecision::ANCHOR);
+}
+
+TEST(MotionBlurSampleDecision, anchorsWhenPreviousLeftBounds) {
+    const CBox BOUNDS    = {0, 0, 1920, 1080};
+    const CBox OFFSCREEN = {-4000, 100, 100, 100}; // window transited off-screen while unrendered
+
+    EXPECT_EQ(sampleDecision(OFFSCREEN, false, CBox{100, 100, 100, 100}, BOUNDS), ESampleDecision::ANCHOR);
+}
+
+TEST(MotionBlurSampleDecision, recordsFreshOnScreenDisplacement) {
+    const CBox BOUNDS   = {0, 0, 1920, 1080};
+    const CBox PREVIOUS = {100, 100, 100, 100};
+    const CBox CURRENT  = {120, 100, 100, 100};
+
+    EXPECT_EQ(sampleDecision(PREVIOUS, false, CURRENT, BOUNDS), ESampleDecision::RECORD);
+}
+
+// --- recordFrame: single-box sampling for popups, layers and close fadeouts ---
+
+TEST(MotionBlurRecordFrame, anchorsFirstSampleAndRecordsDisplacementAfter) {
+    CTracker   tracker;
+    const auto T0 = Time::steadyNow();
+
+    EXPECT_FALSE(recordFrame(tracker, CBox{100, 100, 100, 100}, T0));
+    EXPECT_TRUE(recordFrame(tracker, CBox{120, 100, 100, 100}, T0 + std::chrono::milliseconds(1)));
+
+    const auto RECORDED = tracker.recorded();
+    ASSERT_TRUE(RECORDED.has_value());
+    EXPECT_DOUBLE_EQ(RECORDED->previous.x, 100);
+    EXPECT_DOUBLE_EQ(RECORDED->current.x, 120);
+}
+
+TEST(MotionBlurRecordFrame, skipsUnchangedBoxesWithoutDestroyingTrail) {
+    CTracker   tracker;
+    const auto T0 = Time::steadyNow();
+
+    recordFrame(tracker, CBox{100, 100, 100, 100}, T0);
+    recordFrame(tracker, CBox{120, 100, 100, 100}, T0 + std::chrono::milliseconds(1));
+
+    // an unchanged box anchors in place (prev == curr), the rendered smear collapses instead of tearing down
+    EXPECT_FALSE(recordFrame(tracker, CBox{120, 100, 100, 100}, T0 + std::chrono::milliseconds(2)));
+    const auto STATE = tracker.state(7, {}, false, 1.0, T0 + std::chrono::milliseconds(2), {});
+    EXPECT_FALSE(STATE.has_value());
+}
+
+TEST(MotionBlurRecordFrame, anchorsAfterExpiryGap) {
+    CTracker   tracker;
+    const auto T0 = Time::steadyNow();
+
+    recordFrame(tracker, CBox{100, 100, 100, 100}, T0);
+    recordFrame(tracker, CBox{120, 100, 100, 100}, T0 + std::chrono::milliseconds(1));
+
+    // past the staleness cutoff (popup was occluded): the jump anchors instead of smearing across the gap
+    EXPECT_FALSE(recordFrame(tracker, CBox{800, 100, 100, 100}, T0 + std::chrono::milliseconds(200)));
+    const auto RECORDED = tracker.recorded();
+    ASSERT_TRUE(RECORDED.has_value());
+    EXPECT_EQ(RECORDED->previous.x, RECORDED->current.x);
+}
+
+// --- eligible: master gate with fullscreen opt-in ---
+
+TEST(MotionBlurEligible, requiresMasterSamplesAndStrength) {
+    EXPECT_FALSE(eligible(false, 7, 1.0, false, true));
+    EXPECT_FALSE(eligible(true, 1, 1.0, false, true));
+    EXPECT_FALSE(eligible(true, 7, 0.0, false, true));
+    EXPECT_TRUE(eligible(true, 7, 1.0, false, true));
+}
+
+TEST(MotionBlurEligible, excludesFullscreenUnlessOptedIn) {
+    EXPECT_FALSE(eligible(true, 7, 1.0, true, false));
+    EXPECT_TRUE(eligible(true, 7, 1.0, true, true));
+}

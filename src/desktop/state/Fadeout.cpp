@@ -1,4 +1,5 @@
 #include "Fadeout.hpp"
+#include "../../render/pass/TexPassElement.hpp"
 
 using namespace Desktop;
 using namespace Desktop::View;
@@ -13,4 +14,8 @@ PHLWORKSPACEREF IFadeout::workspace() const {
 
 SFadeoutRenderEffects IFadeout::effects() const {
     return m_effects;
+}
+
+std::optional<SMotionBlurData> IFadeout::motionBlur() const {
+    return std::nullopt;
 }

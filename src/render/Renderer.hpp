@@ -75,6 +75,7 @@ namespace Render {
         void                                damageWindow(PHLWINDOW, bool forceFull = false);
         void                                damageBox(const CBox&, bool skipFrameSchedule = false);
         void                                damageBox(const int& x, const int& y, const int& w, const int& h);
+        void                                damageMotionBlurBox(const CBox&);
         void                                damageRegion(const CRegion&);
         void                                damageMonitor(PHLMONITOR);
         void                                damageMirrorsWith(PHLMONITOR, const CRegion&);

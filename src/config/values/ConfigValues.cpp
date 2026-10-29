@@ -260,6 +260,18 @@ std::vector<SP<IValue>> Values::getConfigValues() {
                   {.min = 0, .max = 10, .refresh = Supplementary::REFRESH_WINDOW_STATES}),
         MS<Float>("decoration:motion_blur:decay", "milliseconds the recorded smear keeps shrinking after the movement stopped (0 disables it)", 0,
                   {.min = 0, .max = 1000, .refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Bool>("decoration:motion_blur:window_animations", "blur mapped window animations (open, move, resize, layout changes)", true, {.refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Bool>("decoration:motion_blur:workspaces", "blur workspace motion (keyboard switches and swipes) for windows on the moving workspace", false,
+                 {.refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Bool>("decoration:motion_blur:window_close", "blur the window close animation, continuing any trail recorded before the close", false,
+                 {.refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Bool>("decoration:motion_blur:popups", "blur spatially moving popups (they follow their parent, the workspace, or their own repositioning; fade-only "
+                 "spawns never smear)",
+                 false, {.refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Bool>("decoration:motion_blur:layers", "blur layer-shell surface slide/popin animations; stationary fades do not smear", false,
+                 {.refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Bool>("decoration:motion_blur:fullscreen", "allow motion blur on fullscreen windows and while a workspace animates behind them", false,
+                 {.refresh = Supplementary::REFRESH_WINDOW_STATES}),
 
         /*
          * animations:

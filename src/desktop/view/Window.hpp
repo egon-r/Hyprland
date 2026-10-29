@@ -157,6 +157,10 @@ namespace Desktop::View {
         // for floating window offset in workspace animations
         Vector2D m_floatingOffset = Vector2D(0, 0);
 
+        // workspace offset seen by the last motion blur frame sample, used to decompose pure workspace displacement from local
+        // geometry motion
+        Vector2D m_motionBlurLastOffset = Vector2D(0, 0);
+
         // for recovering relative cursor position
         Vector2D      m_relativeCursorCoordsOnLastWarp = Vector2D(-1, -1);
 
@@ -392,40 +396,48 @@ namespace Desktop::View {
         void                              onFocusAnimUpdate();
         std::optional<MotionBlur::SState> motionBlurState(bool allowStale = false) const;
         void                              damageMotionBlur(bool allowStale = false) const;
-        void                              recordMotionBlur(const CBox& previous, const CBox& current);
-        void                              settleMotionBlur();
-        void                              tickMotionBlurDecay();
-        void                              resetMotionBlur();
-        void                              onUpdateState();
-        void                              onUpdateMeta();
-        void                              onX11ConfigureRequest(CBox box);
-        void                              onResourceChangeX11();
-        std::string                       fetchTitle();
-        std::string                       fetchClass();
-        void                              warpCursor(bool force = false);
-        PHLWINDOW                         getSwallowee();
-        bool                              isX11OverrideRedirect();
-        bool                              isModal();
-        Vector2D                          realToReportSize();
-        Vector2D                          realToReportPosition();
-        Vector2D                          xwaylandSizeToReal(Vector2D size);
-        Vector2D                          xwaylandPositionToReal(Vector2D size);
-        void                              updateX11SurfaceScale();
-        void                              sendWindowSize(bool force = false);
-        NContentType::eContentType        getContentType();
-        void                              setContentType(NContentType::eContentType contentType);
-        void                              deactivateGroupMembers();
-        bool                              isNotResponding();
-        std::optional<std::string>        xdgTag();
-        std::optional<std::string>        xdgDescription();
-        PHLWINDOW                         parent();
-        bool                              priorityFocus();
-        SP<CWLSurfaceResource>            getSolitaryResource();
-        Vector2D                          getReportedSize();
-        std::optional<Vector2D>           calculateExpression(const std::string& s);
-        std::optional<Vector2D>           calculateExpression(const Math::SExpressionVec2& expr);
-        std::optional<Vector2D>           minSize();
-        std::optional<Vector2D>           maxSize();
+        // unified screen-space record box: the layout hull with the workspace render offset and floating offset baked in
+        CBox motionBlurRecordBox() const;
+        // raw recorded boxes (no strength scaling), for consumers that continue the trail in their own tracker
+        std::optional<MotionBlur::SRecordedMotion> motionBlurRecorded() const;
+        // render-side frame sampler for workspace-driven motion; owns ONLY the workspace render offset step. Event-driven
+        // records (animations, drags) keep authority over their own frames; the sampler anchors (never smears) on the first
+        // frame of a motion, after occlusion gaps, and drops its transformer once the workspace settles again.
+        void                       sampleMotionBlurFrame(const CBox& composedGlobalBox);
+        void                       recordMotionBlur(const CBox& previous, const CBox& current);
+        void                       settleMotionBlur();
+        void                       tickMotionBlurDecay();
+        void                       resetMotionBlur();
+        void                       onUpdateState();
+        void                       onUpdateMeta();
+        void                       onX11ConfigureRequest(CBox box);
+        void                       onResourceChangeX11();
+        std::string                fetchTitle();
+        std::string                fetchClass();
+        void                       warpCursor(bool force = false);
+        PHLWINDOW                  getSwallowee();
+        bool                       isX11OverrideRedirect();
+        bool                       isModal();
+        Vector2D                   realToReportSize();
+        Vector2D                   realToReportPosition();
+        Vector2D                   xwaylandSizeToReal(Vector2D size);
+        Vector2D                   xwaylandPositionToReal(Vector2D size);
+        void                       updateX11SurfaceScale();
+        void                       sendWindowSize(bool force = false);
+        NContentType::eContentType getContentType();
+        void                       setContentType(NContentType::eContentType contentType);
+        void                       deactivateGroupMembers();
+        bool                       isNotResponding();
+        std::optional<std::string> xdgTag();
+        std::optional<std::string> xdgDescription();
+        PHLWINDOW                  parent();
+        bool                       priorityFocus();
+        SP<CWLSurfaceResource>     getSolitaryResource();
+        Vector2D                   getReportedSize();
+        std::optional<Vector2D>    calculateExpression(const std::string& s);
+        std::optional<Vector2D>    calculateExpression(const Math::SExpressionVec2& expr);
+        std::optional<Vector2D>    minSize();
+        std::optional<Vector2D>    maxSize();
         // Returns the highest level target of a window
         // e.g. if the window is a part of a group, this returns the window group target
         SP<Layout::ITarget> layoutTarget();

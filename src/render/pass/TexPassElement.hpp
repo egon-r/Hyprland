@@ -26,7 +26,12 @@ struct SMotionBlurData {
     Vector2D sourceTexSize;
     int      samples = 1;
 
-    CBox     extents() const;
+    // true when source is a raw crop in texture pixels (the surface's UV rect): the shader maps it straight into the
+    // sampled texture, skipping the renderModif/monitor-transform composition that previous/current still ride.
+    // false keeps the legacy framebuffer-coordinate source (snapshot, fadeout, transformed-window paths).
+    bool sourceInTextureSpace = false;
+
+    CBox extents() const;
 };
 
 class CTexPassElement : public IPassElement {

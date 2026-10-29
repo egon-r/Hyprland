@@ -9,6 +9,7 @@
 #include "../../managers/SeatManager.hpp"
 #include "../../animation/AnimationManager.hpp"
 #include "../../render/Renderer.hpp"
+#include "../../render/transformer/MotionBlurTransformer.hpp"
 #include "../../config/shared/animation/AnimationTree.hpp"
 #include "../../output/Monitor.hpp"
 #include "../../managers/input/InputManager.hpp"
@@ -66,11 +67,88 @@ PHLLS CLayerSurface::fromView(SP<IView> v) {
     return dynamicPointerCast<CLayerSurface>(v);
 }
 
-void CLayerSurface::registerCallbacks() {
-    m_alpha.get(LS_ALPHA_FADE)->setUpdateCallback([this](auto) {
-        if (m_ruleApplicator->dimAround().valueOrDefault() && m_monitor)
-            g_pHyprRenderer->damageMonitor(m_monitor.lock());
-    });
+std::optional<MotionBlur::SState> CLayerSurface::motionBlurState(bool allowStale) const {
+    if (!allowStale) {
+        // recording/rendering gates; the stale (damage-clearing) path must see the recorded footprint even when toggled off
+        static auto PENABLED = CConfigValue<Config::INTEGER>("decoration:motion_blur:enabled");
+        static auto PLAYERS  = CConfigValue<Config::INTEGER>("decoration:motion_blur:layers");
+        if (!*PENABLED || !*PLAYERS)
+            return std::nullopt;
+    }
+
+    return Render::CMotionBlurTransformer::trackerState(m_motionBlur, allowStale);
+}
+
+void CLayerSurface::sampleMotionBlurFrame(const CBox& composedGlobalBox) {
+    static auto PENABLED = CConfigValue<Config::INTEGER>("decoration:motion_blur:enabled");
+    static auto PLAYERS  = CConfigValue<Config::INTEGER>("decoration:motion_blur:layers");
+    if (!*PENABLED || !*PLAYERS) {
+        // toggled off: clear a lingering trail the next time this layer renders, then stop
+        if (m_motionBlur.recorded()) {
+            damageMotionBlur(true);
+            m_motionBlur.reset();
+        }
+        return;
+    }
+
+    if (!g_pHyprRenderer)
+        return;
+
+    const auto DECAY = Render::CMotionBlurTransformer::decayTimeout();
+
+    if (m_motionBlur.recorded() && m_motionBlur.expired(Time::steadyNow(), DECAY)) {
+        // the trail finished: clear its last footprint once and stop the damage cadence (no unbounded timer). An EMPTY
+        // tracker must fall through so first-time sampling can anchor and initialize
+        damageMotionBlur(true);
+        m_motionBlur.reset();
+        return;
+    }
+    // damage the old hull BEFORE the record overwrites the pair; the damage drives the frames that keep repainting the
+    // shrinking trail until it expires. Real spatial motion records here too (silent commits that move the layer), while
+    // expiry-anchored restarts keep arrange teleports from smearing across dead trails
+    damageMotionBlur(true);
+
+    if (MotionBlur::recordFrame(m_motionBlur, composedGlobalBox, Time::steadyNow(), DECAY))
+        damageMotionBlur();
+}
+
+void CLayerSurface::recordMotionBlur(const CBox& previous, const CBox& current) {
+    static auto PENABLED = CConfigValue<Config::INTEGER>("decoration:motion_blur:enabled");
+    static auto PLAYERS  = CConfigValue<Config::INTEGER>("decoration:motion_blur:layers");
+    if (!*PENABLED || !*PLAYERS) {
+        // toggled off: clear any lingering trail, then stop recording
+        if (m_motionBlur.recorded()) {
+            damageMotionBlur(true);
+            m_motionBlur.reset();
+        }
+        return;
+    }
+
+    if (previous == current) {
+        m_motionBlur.reanchor(current);
+        return;
+    }
+
+    if (g_pHyprRenderer)
+        damageMotionBlur(true);
+
+    m_motionBlur.record(previous, current);
+
+    if (g_pHyprRenderer)
+        damageMotionBlur();
+}
+
+void CLayerSurface::damageMotionBlur(bool allowStale) const {
+    const auto STATE = motionBlurState(allowStale);
+    if (!STATE || !g_pHyprRenderer)
+        return;
+
+    CBox damage = STATE->extents();
+    g_pHyprRenderer->damageMotionBlurBox(damage);
+}
+
+void CLayerSurface::resetMotionBlur() {
+    m_motionBlur.reset();
 }
 
 CLayerSurface::CLayerSurface(SP<CLayerShellResource> resource_) : IView(CWLSurface::create()), m_layerSurface(resource_), m_animationController(this), m_alpha(LS_ALPHA_LAST) {
@@ -94,6 +172,28 @@ CLayerSurface::~CLayerSurface() {
             std::erase_if(lsl, [this](auto& ls) { return ls.expired() || ls.get() == this; });
         }
     }
+}
+
+void CLayerSurface::registerCallbacks() {
+    m_alpha.get(LS_ALPHA_FADE)->setUpdateCallback([this](auto) {
+        if (m_ruleApplicator->dimAround().valueOrDefault() && m_monitor)
+            g_pHyprRenderer->damageMonitor(m_monitor.lock());
+    });
+
+    // motion trails need damage over their whole hull while shrinking (slide/popin); stationary fades never record
+    m_realPosition->setUpdateCallback([this](auto) {
+        if (!g_pHyprRenderer)
+            return;
+
+        static auto PENABLED = CConfigValue<Config::INTEGER>("decoration:motion_blur:enabled");
+        static auto PLAYERS  = CConfigValue<Config::INTEGER>("decoration:motion_blur:layers");
+        if (!*PENABLED || !*PLAYERS)
+            return;
+
+        damageMotionBlur(true); // old hull before the record overwrites the pair
+        if (MotionBlur::recordFrame(m_motionBlur, geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT), Time::steadyNow(), Render::CMotionBlurTransformer::decayTimeout()))
+            damageMotionBlur();
+    });
 }
 
 eViewType CLayerSurface::type() const {
@@ -242,6 +342,11 @@ void CLayerSurface::onUnmap() {
     // end any pending animations so that snapshot has right dimensions
     m_realPosition->warp();
     m_realSize->warp();
+
+    // final trail damage BEFORE the tracker resets; the fadeout snapshot carries the last frame without a smear
+    if (g_pHyprRenderer)
+        damageMotionBlur(true);
+    m_motionBlur.reset();
 
     // make a snapshot and start fade
     const auto SNAPSHOT    = !m_ruleApplicator->noanim().valueOrDefault() ? g_pHyprRenderer->makeSnapshotFB(m_self.lock()) : nullptr;

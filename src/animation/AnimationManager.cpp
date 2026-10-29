@@ -181,6 +181,8 @@ void CHyprAnimationManager::tick() {
         PHLLS        layer;
         PHLMONITOR   monitor;
         CBox         previousFull;
+        CBox         previousLayout;    // pure layout hull, no workspace/floating offsets baked in
+        CBox         previousGeometric; // layer owners only
         bool         entire            = false;
         bool         border            = false;
         bool         shadow            = false;
@@ -259,18 +261,21 @@ void CHyprAnimationManager::tick() {
         if (!owner.window)
             continue;
 
-        owner.previousFull      = owner.window->getFullWindowBoundingBox();
+        owner.previousFull      = owner.window->motionBlurRecordBox();
+        owner.previousLayout    = owner.window->getFullWindowBoundingBox();
         owner.trackWindowMotion = true;
     }
 
     // pre-damage each owner once (old state)
-    for (const auto& owner : owners) {
+    for (auto& owner : owners) {
         if (owner.window)
             damageWindowForPolicies(owner.window, owner.entire, owner.border, owner.shadow, owner.glow);
         else if (owner.workspace)
             preDamageWorkspace(owner.workspace, owner.monitor);
         else if (owner.layer) {
-            CBox expandBox = owner.layer->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+            owner.previousGeometric = owner.layer->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+
+            CBox expandBox = owner.previousGeometric;
             expandBox.expand(5);
             g_pHyprRenderer->damageBox(expandBox);
         }
@@ -307,7 +312,28 @@ void CHyprAnimationManager::tick() {
         if (!owner.window || !owner.trackWindowMotion)
             continue;
 
-        owner.window->recordMotionBlur(owner.previousFull, owner.window->getFullWindowBoundingBox());
+        static auto PMBWINDOWANIMS = CConfigValue<Config::INTEGER>("decoration:motion_blur:window_animations");
+        if (!*PMBWINDOWANIMS)
+            continue;
+
+        const CBox  CURRENTLAYOUT   = owner.window->getFullWindowBoundingBox();
+        const CBox  CURRENTCOMPOSED = owner.window->motionBlurRecordBox();
+
+        static auto PMBWORKSPACES = CConfigValue<Config::INTEGER>("decoration:motion_blur:workspaces");
+        if (*PMBWORKSPACES) {
+            // workspace motion opted in: the pair spans the total screen displacement (workspace step + local animation)
+            owner.window->recordMotionBlur(owner.previousFull, CURRENTCOMPOSED);
+            continue;
+        }
+
+        // workspace motion NOT opted in: record only the local geometry delta, anchored at the actual current screen box, so
+        // a workspace slide never leaks into the window-anim trail even while other window vars (alpha, border) animate
+        CBox localPrevious = CURRENTCOMPOSED;
+        localPrevious.x -= CURRENTLAYOUT.x - owner.previousLayout.x;
+        localPrevious.y -= CURRENTLAYOUT.y - owner.previousLayout.y;
+        localPrevious.w = owner.previousLayout.w;
+        localPrevious.h = owner.previousLayout.h;
+        owner.window->recordMotionBlur(localPrevious, CURRENTCOMPOSED);
     }
 
     // post-damage each owner once (new state) + schedule frames
@@ -324,6 +350,10 @@ void CHyprAnimationManager::tick() {
                 }
             }
         } else if (owner.layer) {
+            static auto PMBLAYERS = CConfigValue<Config::INTEGER>("decoration:motion_blur:layers");
+            if (*PMBLAYERS)
+                owner.layer->recordMotionBlur(owner.previousGeometric, owner.layer->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT));
+
             if (owner.entire) {
                 if (owner.layer->m_layer <= 1)
                     owner.monitor->m_blurFBDirty = true;

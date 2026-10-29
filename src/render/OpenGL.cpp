@@ -1454,14 +1454,20 @@ WP<CShader> CHyprOpenGLImpl::renderToFBInternal(SP<ITexture> tex, const STexture
         CBox motionSource = data.motionBlur.source;
         m_renderData.renderModif.applyToBox(motionPrev);
         m_renderData.renderModif.applyToBox(motionCurr);
-        m_renderData.renderModif.applyToBox(motionSource);
+        // previous/current live in monitor space and ride the composed output transforms; a texture-space source is a
+        // raw crop in texture pixels (the surface's UV rect) and maps straight into the sampled texture instead
+        if (!data.motionBlur.sourceInTextureSpace) {
+            m_renderData.renderModif.applyToBox(motionSource);
+        }
 
         motionPrev.transform(Math::wlTransformToHyprutils(Math::invertTransform(m_renderData.pMonitor->m_transform)), m_renderData.pMonitor->m_transformedSize.x,
                              m_renderData.pMonitor->m_transformedSize.y);
         motionCurr.transform(Math::wlTransformToHyprutils(Math::invertTransform(m_renderData.pMonitor->m_transform)), m_renderData.pMonitor->m_transformedSize.x,
                              m_renderData.pMonitor->m_transformedSize.y);
-        motionSource.transform(Math::wlTransformToHyprutils(Math::invertTransform(m_renderData.pMonitor->m_transform)), m_renderData.pMonitor->m_transformedSize.x,
-                               m_renderData.pMonitor->m_transformedSize.y);
+        if (!data.motionBlur.sourceInTextureSpace) {
+            motionSource.transform(Math::wlTransformToHyprutils(Math::invertTransform(m_renderData.pMonitor->m_transform)), m_renderData.pMonitor->m_transformedSize.x,
+                                   m_renderData.pMonitor->m_transformedSize.y);
+        }
 
         shader->setUniformFloat4(SHADER_MOTION_PREV_BOX, motionPrev.x, motionPrev.y, motionPrev.w, motionPrev.h);
         shader->setUniformFloat4(SHADER_MOTION_CURR_BOX, motionCurr.x, motionCurr.y, motionCurr.w, motionCurr.h);

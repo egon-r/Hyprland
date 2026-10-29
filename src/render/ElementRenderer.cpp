@@ -268,11 +268,51 @@ void IElementRenderer::drawSurface(WP<CSurfacePassElement> element, const CRegio
 
     calculateUVForSurface(m_data.pWindow, m_data.surface, m_data.pMonitor->m_self.lock(), m_data.mainSurface, windowBox.size(), PROJSIZEUNSCALED, MISALIGNEDFSV1);
 
+    // surface-level motion blur (popups, layers): move the recorded pair into FB space and sample through the exact UV rect
+    // the normal draw uses, so viewport crops, buffer scales and misalignment fixups are preserved. Surfaces with a non-normal
+    // buffer transform are drawn unblurred instead of sampling rotated content wrongly.
+    SMotionBlurData motionBlur = m_data.motionBlur;
+    CBox            outputBox  = windowBox;
+    if (motionBlur.enabled) {
+        if (m_data.surface && m_data.surface->m_current.transform != WL_OUTPUT_TRANSFORM_NORMAL)
+            motionBlur.enabled = false;
+    }
+
     auto cancelRender = false;
     auto clipRegion   = element->visibleRegion(cancelRender);
     if (cancelRender) {
         element->discard();
         return;
+    }
+
+    if (motionBlur.enabled) {
+        // map the owner's recorded pair onto this surface's own rect (both monitor-local logical): subsurfaces ride the
+        // owner's motion at their relative position instead of being projected across its full hull
+        const CBox OWNBOX = element->getTexBox();
+        if (OWNBOX.w > 0 && OWNBOX.h > 0 && motionBlur.current.w > 0 && motionBlur.current.h > 0) {
+            const Vector2D RPOS = (OWNBOX.pos() - motionBlur.current.pos()) / Vector2D{motionBlur.current.w, motionBlur.current.h};
+            const Vector2D RSIZ = Vector2D{OWNBOX.w, OWNBOX.h} / Vector2D{motionBlur.current.w, motionBlur.current.h};
+            motionBlur.previous = CBox{motionBlur.previous.pos() + RPOS * Vector2D{motionBlur.previous.w, motionBlur.previous.h}, motionBlur.previous.size() * RSIZ};
+            motionBlur.current  = OWNBOX;
+        }
+
+        const Vector2D TEXSIZE = TEXTURE->m_size;
+        auto           uvTL    = g_pHyprRenderer->m_renderData.primarySurfaceUVTopLeft;
+        auto           uvBR    = g_pHyprRenderer->m_renderData.primarySurfaceUVBottomRight;
+        if (uvTL == Vector2D(-1, -1))
+            uvTL = Vector2D(0, 0);
+        if (uvBR == Vector2D(-1, -1))
+            uvBR = Vector2D(1, 1);
+
+        motionBlur.previous.scale(m_data.pMonitor->m_scale);
+        motionBlur.current.scale(m_data.pMonitor->m_scale);
+        motionBlur.source               = CBox{uvTL * TEXSIZE, (uvBR - uvTL) * TEXSIZE};
+        motionBlur.sourceTexSize        = TEXSIZE;
+        motionBlur.sourceInTextureSpace = true; // source is the raw UV crop above: texture pixels, not FB geometry
+        outputBox                       = motionBlur.extents().round();
+
+        // the trail reaches past the surface's visible region; the shader bounds its own sampling through the motion boxes
+        clipRegion = CRegion{};
     }
 
     // check for fractional scale surfaces misaligning the buffer size
@@ -307,7 +347,7 @@ void IElementRenderer::drawSurface(WP<CSurfacePassElement> element, const CRegio
         if (BLUR)
             drawElement(makeShared<CTexPassElement>(CTexPassElement::SRenderData{
                             .tex                   = TEXTURE,
-                            .box                   = windowBox,
+                            .box                   = outputBox,
                             .a                     = ALPHA,
                             .blurA                 = m_data.fadeAlpha,
                             .overallA              = OVERALL_ALPHA,
@@ -323,12 +363,13 @@ void IElementRenderer::drawSurface(WP<CSurfacePassElement> element, const CRegio
                             .discardOpacity        = m_data.discardOpacity,
                             .clipRegion            = clipRegion,
                             .currentLS             = m_data.pLS,
+                            .motionBlur            = motionBlur,
                         }),
-                        m_renderData.damage.copy().intersect(windowBox));
+                        m_renderData.damage.copy().intersect(outputBox));
         else
             drawElement(makeShared<CTexPassElement>(CTexPassElement::SRenderData{
                             .tex            = TEXTURE,
-                            .box            = windowBox,
+                            .box            = outputBox,
                             .a              = ALPHA * OVERALL_ALPHA,
                             .round          = rounding,
                             .roundingPower  = roundingPower,
@@ -341,13 +382,14 @@ void IElementRenderer::drawSurface(WP<CSurfacePassElement> element, const CRegio
                             .discardOpacity = m_data.discardOpacity,
                             .clipRegion     = clipRegion,
                             .currentLS      = m_data.pLS,
+                            .motionBlur     = motionBlur,
                         }),
-                        m_renderData.damage.copy().intersect(windowBox));
+                        m_renderData.damage.copy().intersect(outputBox));
     } else {
         if (BLUR && m_data.popup)
             drawElement(makeShared<CTexPassElement>(CTexPassElement::SRenderData{
                             .tex                   = TEXTURE,
-                            .box                   = windowBox,
+                            .box                   = outputBox,
                             .a                     = ALPHA,
                             .blurA                 = m_data.fadeAlpha,
                             .overallA              = OVERALL_ALPHA,
@@ -363,12 +405,13 @@ void IElementRenderer::drawSurface(WP<CSurfacePassElement> element, const CRegio
                             .discardOpacity        = m_data.discardOpacity,
                             .clipRegion            = clipRegion,
                             .currentLS             = m_data.pLS,
+                            .motionBlur            = motionBlur,
                         }),
-                        m_renderData.damage.copy().intersect(windowBox));
+                        m_renderData.damage.copy().intersect(outputBox));
         else
             drawElement(makeShared<CTexPassElement>(CTexPassElement::SRenderData{
                             .tex            = TEXTURE,
-                            .box            = windowBox,
+                            .box            = outputBox,
                             .a              = ALPHA * OVERALL_ALPHA,
                             .round          = rounding,
                             .roundingPower  = roundingPower,
@@ -381,8 +424,9 @@ void IElementRenderer::drawSurface(WP<CSurfacePassElement> element, const CRegio
                             .discardOpacity = m_data.discardOpacity,
                             .clipRegion     = clipRegion,
                             .currentLS      = m_data.pLS,
+                            .motionBlur     = motionBlur,
                         }),
-                        m_renderData.damage.copy().intersect(windowBox));
+                        m_renderData.damage.copy().intersect(outputBox));
     }
 
     g_pHyprRenderer->blend(true);

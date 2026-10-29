@@ -115,17 +115,24 @@ bool CSurfacePassElement::needsPrecomputeBlur() {
 }
 
 std::optional<CBox> CSurfacePassElement::boundingBox() {
+    // in monitor-local logical coordinates; a live trail reaches past the surface box, so the hull drives culling
+    if (m_data.motionBlur.enabled)
+        return m_data.motionBlur.extents();
+
     return getTexBox();
 }
 
 CRegion CSurfacePassElement::opaqueRegion() {
+    // a motion trail averages surface samples across the smear: its hull is never fully opaque, so the pass optimizer must
+    // keep the backdrop instead of culling it through the fractional-alpha edges
+    if (m_data.motionBlur.enabled)
+        return {};
+
     auto        PSURFACE = Desktop::View::CWLSurface::fromResource(m_data.surface);
 
     const float ALPHA = m_data.alpha * m_data.fadeAlpha * (PSURFACE ? PSURFACE->m_alphaModifier * PSURFACE->m_overallOpacity : 1.F);
-
     if (ALPHA < 1.F)
         return {};
-
     if (m_data.surface && m_data.surface->m_current.size == Vector2D{m_data.w, m_data.h}) {
         CRegion    opaqueSurf = m_data.surface->m_current.opaque.copy().intersect(CBox{{}, {m_data.w, m_data.h}});
         const auto texBox     = getTexBox();

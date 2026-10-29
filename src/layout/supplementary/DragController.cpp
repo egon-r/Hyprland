@@ -357,7 +357,7 @@ void CDragStateController::mouseMove(const Vector2D& mousePos) {
     CBox       previousFull;
 
     if (TRACKMOTION)
-        previousFull = MOTIONWINDOW->getFullWindowBoundingBox();
+        previousFull = MOTIONWINDOW->motionBlurRecordBox();
 
     if (m_dragMode == MBIND_MOVE) {
 
@@ -436,9 +436,8 @@ void CDragStateController::mouseMove(const Vector2D& mousePos) {
             DRAGGINGTARGET->warpPositionSize();
         }
     }
-
     if (TRACKMOTION)
-        MOTIONWINDOW->recordMotionBlur(previousFull, MOTIONWINDOW->getFullWindowBoundingBox());
+        MOTIONWINDOW->recordMotionBlur(previousFull, MOTIONWINDOW->motionBlurRecordBox());
 
     // get middle point
     Vector2D middle = DRAGGINGTARGET->position().middle();

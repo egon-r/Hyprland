@@ -7,6 +7,7 @@
 #include "../../protocols/LayerShell.hpp"
 #include "../../render/Framebuffer.hpp"
 #include "../../render/Renderer.hpp"
+#include "../../render/transformer/MotionBlurTransformer.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -79,8 +80,21 @@ SP<CLayerFadeout> CLayerFadeout::create(PHLLS layer, SP<Render::IFramebuffer> sn
     Animation::mgr()->createAnimation(ANIMCTX.size.from, fadeout->m_realSize, Config::animationTree()->getAnimationPropertyConfig("layersOut"), AVARDAMAGE_NONE);
     Animation::mgr()->createAnimation(sourceAlpha, fadeout->m_alpha, Config::animationTree()->getAnimationPropertyConfig("fadeLayersOut"), AVARDAMAGE_NONE);
 
-    const WP<CLayerFadeout> WEAK   = fadeout;
-    const auto              DAMAGE = [WEAK](auto) {
+    const WP<CLayerFadeout> WEAK = fadeout;
+
+    // seed the exit-anim trail by carrying the dying layer's rendered displacement onto the fadeout's own animated hull
+    static auto PLAYERS = CConfigValue<Config::INTEGER>("decoration:motion_blur:layers");
+    if (*PLAYERS) {
+        const CBox FROM  = {ANIMCTX.pos.from, ANIMCTX.size.from};
+        const auto TRAIL = layer->motionBlurState(true);
+        if (TRAIL) {
+            const Vector2D DELTA = TRAIL->current.pos() - TRAIL->previous.pos();
+            fadeout->m_motionBlur.record(FROM.copy().translate(-DELTA), FROM);
+        } else
+            MotionBlur::recordFrame(fadeout->m_motionBlur, FROM, Time::steadyNow(), Render::CMotionBlurTransformer::decayTimeout());
+    }
+
+    const auto DAMAGE = [WEAK](auto) {
         if (const auto FADEOUT = WEAK.lock(); FADEOUT) {
             damageFadeoutMonitor(FADEOUT->m_monitor);
             if (const auto MONITOR = FADEOUT->m_monitor.lock(); MONITOR && FADEOUT->m_marksBlurDirty)
@@ -142,4 +156,32 @@ SFadeoutRenderEffects CLayerFadeout::effects() const {
         effects.textureBlur.alpha = std::sqrt(std::max(alpha(), 0.F));
 
     return effects;
+}
+
+std::optional<SMotionBlurData> CLayerFadeout::motionBlur() const {
+    static auto PENABLED = CConfigValue<Config::INTEGER>("decoration:motion_blur:enabled");
+    static auto PLAYERS  = CConfigValue<Config::INTEGER>("decoration:motion_blur:layers");
+    const auto  MONITOR  = m_monitor.lock();
+    if (!*PENABLED || !*PLAYERS || !MONITOR) {
+        // toggled off mid-fade: drop any lingering trail; the fadeout's update callbacks keep the monitor damaged
+        m_motionBlur.reset();
+        return std::nullopt;
+    }
+
+    // per-frame sampling over the exit slide/popin; alpha-only settles decay the trail out naturally
+    MotionBlur::recordFrame(m_motionBlur, CBox{m_realPosition->value(), m_realSize->value()}, Time::steadyNow(), Render::CMotionBlurTransformer::decayTimeout());
+
+    const auto STATE = Render::CMotionBlurTransformer::trackerState(m_motionBlur, false);
+    if (!STATE)
+        return std::nullopt;
+
+    SMotionBlurData mb;
+    mb.enabled  = true;
+    mb.previous = STATE->previous.copy().translate(-MONITOR->m_position);
+    mb.current  = STATE->current.copy().translate(-MONITOR->m_position);
+    mb.samples  = STATE->samples;
+    // the snapshot FB holds the ORIGINAL monitor image: sample the original content crop (m_geometry is monitor-local
+    // logical; renderFadeouts scales it to FB pixels), while prev/current are the animated destination rects
+    mb.source = CBox{m_geometry.pos(), m_geometry.size()};
+    return mb;
 }

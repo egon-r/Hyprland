@@ -53,6 +53,10 @@ class CSurfacePassElement : public IPassElement {
         bool    useNearestNeighbor = false;
 
         bool    flipEndFrame = false;
+
+        // motion blur data in monitor-relative logical coordinates; only populated for popups and layer surfaces (windows
+        // ride the transformed-window pass instead)
+        SMotionBlurData motionBlur;
     };
 
     CSurfacePassElement(const SRenderData& data);

@@ -8,7 +8,7 @@ namespace Render {
         CMotionBlurTransformer(PHLWINDOWREF window);
         virtual ~CMotionBlurTransformer();
 
-        static bool                      shouldEnable(PHLWINDOW window);
+        static bool shouldEnable(PHLWINDOW window);
         // decoration:motion_blur:decay clamped to its configured 0..1000 ms range
         static std::chrono::milliseconds decayTimeout();
 
@@ -18,11 +18,18 @@ namespace Render {
         void                             record(const CBox& previous, const CBox& current);
         void                             reanchor(const CBox& current);
         // keeps the transformer alive past the end of motion so the decay keeps ticking down at frame cadence
-        void                             settle();
-        void                             reset();
+        void                              settle();
+        void                              reset();
 
         std::optional<MotionBlur::SState> state(bool allowStale = false) const;
-        bool                              expired() const;
+        // raw recorded boxes (no strength scaling), for consumers that continue the trail in their own tracker
+        std::optional<MotionBlur::SRecordedMotion> recorded() const;
+
+        // Configured state for a raw tracker owned outside the transformed-window pass (popups, layer surfaces, close
+        // fadeouts): applies the global samples/strength/decay config. Stale (damage-clearing) reads bypass the master gate.
+        static std::optional<MotionBlur::SState> trackerState(const MotionBlur::CTracker& tracker, bool allowStale);
+
+        bool                                     expired() const;
 
       private:
         void                 armExpiryTimer();
