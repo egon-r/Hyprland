@@ -36,12 +36,16 @@ easy IPC, much more QoL stuff than other compositors and more...
 > [!IMPORTANT]
 > **Personal, unofficial build — not upstream Hyprland.** This repository is an independent
 > personal derivative of [hyprwm/Hyprland](https://github.com/hyprwm/Hyprland), based on
-> upstream **v0.56.2** and retaining upstream's README, license, and history. Its one local
-> feature is `decoration:motion_blur:strength`, a smear-length multiplier for window motion
+> upstream **v0.56.2** and retaining upstream's README, license, and history. Its local
+> features are `decoration:motion_blur:strength`, a smear-length multiplier for window motion
 > blur, independent of the `:samples` count: range **0–10**, default **1** (smear matches the
-> recorded motion), **2** doubles the smear length, **0** disables the effect. The bundled
+> recorded motion), **2** doubles the smear length, **0** disables the effect; and
+> `decoration:motion_blur:decay`, milliseconds (**0–1000**, default **0**) the recorded smear
+> keeps shrinking toward the window's final box after the movement stops — a finite, linearly
+> decaying smear re-rendered from the recorded motion, not a replay of cached frames (`strength`
+> is purely spatial; `decay` only extends how long the trail lingers). The bundled
 > [`example/hyprland.lua`](example/hyprland.lua) demonstrates enabling it with
-> `enabled = true, samples = 8, strength = 2`.
+> `enabled = true, samples = 8, strength = 2, decay = 200`.
 >
 > This repository is a **source/build artifact only**: compiling it produces a patched
 > compositor binary. A stock (unpatched) Hyprland has no such option, and the patched binary

@@ -1,5 +1,7 @@
 #include "MotionBlur.hpp"
 
+#include "memory/Memory.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <chrono>
@@ -40,11 +42,27 @@ CBox SState::extents() const {
     return MotionBlur::extents(previous, current);
 }
 
-void CTracker::record(const CBox& previous, const CBox& current) {
+void CTracker::record(const CBox& previous, const CBox& current, Time::steady_tp now) {
     m_previous  = previous;
     m_current   = current;
-    m_updatedAt = Time::steadyNow();
+    m_updatedAt = now;
     m_valid     = true;
+}
+
+void CTracker::reanchor(const CBox& current) {
+    if (!m_valid)
+        return;
+
+    // translate the whole recorded displacement (position and size) onto the actual final box; `m_updatedAt` is deliberately
+    // left untouched
+    const Vector2D POS_DELTA  = current.pos() - m_current.pos();
+    const Vector2D SIZE_DELTA = current.size() - m_current.size();
+
+    m_previous.translate(POS_DELTA);
+    m_previous.w = std::max(m_previous.w + SIZE_DELTA.x, MIN_SCALED_SIZE);
+    m_previous.h = std::max(m_previous.h + SIZE_DELTA.y, MIN_SCALED_SIZE);
+
+    m_current = current;
 }
 
 void CTracker::reset() {
@@ -54,18 +72,38 @@ void CTracker::reset() {
 }
 
 // upper bound matches the decoration:motion_blur:strength config range
-constexpr double      MAX_STRENGTH = 10;
+constexpr double MAX_STRENGTH = 10;
 
-std::optional<SState> CTracker::state(int samples, const Vector2D& offset, bool allowStale, double strength) const {
+// stock staleness cutoff for the recorded motion when no decay is configured
+constexpr float STALE_MS = 100;
+
+bool CTracker::expired(Time::steady_tp now, std::chrono::milliseconds decay) const {
     if (!m_valid)
-        return std::nullopt;
+        return true;
 
-    const float AGE = std::chrono::duration<float, std::milli>(Time::steadyNow() - m_updatedAt).count();
-    if (!allowStale && AGE > 100.F)
+    const float AGE = std::chrono::duration<float, std::milli>(now - m_updatedAt).count();
+    return decay.count() > 0 ? AGE >= sc<float>(decay.count()) : AGE > STALE_MS;
+}
+
+std::optional<SState> CTracker::state(int samples, const Vector2D& offset, bool allowStale, double strength, Time::steady_tp now, std::chrono::milliseconds decay) const {
+    if (!m_valid || (!allowStale && expired(now, decay)))
         return std::nullopt;
 
     CBox previous = m_previous.copy().translate(offset);
     CBox current  = m_current.copy().translate(offset);
+
+    // with a decay configured, the trail shrinks linearly toward the static current box over the configured duration; the stale
+    // (damage clearing) path skips the shrink so the full recorded footprint stays available even at expiry
+    const float DECAY_MS = sc<float>(decay.count());
+    if (!allowStale && DECAY_MS > 0.F) {
+        const float AGE      = std::chrono::duration<float, std::milli>(now - m_updatedAt).count();
+        const float PROGRESS = std::clamp(AGE / DECAY_MS, 0.F, 1.F);
+
+        previous.x += (current.x - previous.x) * PROGRESS;
+        previous.y += (current.y - previous.y) * PROGRESS;
+        previous.w += (current.w - previous.w) * PROGRESS;
+        previous.h += (current.h - previous.h) * PROGRESS;
+    }
 
     if (previous == current || previous.w <= 0.F || previous.h <= 0.F || current.w <= 0.F || current.h <= 0.F)
         return std::nullopt;

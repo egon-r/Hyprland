@@ -1152,7 +1152,8 @@ static void setVector2DAnimToMove(WP<CBaseAnimatedVariable> pav) {
         animvar->m_Context.pWindow->presentation().setAnimatingIn(false);
 
         if (!animvar->m_Context.pWindow->positionAnimation()->isBeingAnimated() && !animvar->m_Context.pWindow->sizeAnimation()->isBeingAnimated()) {
-            animvar->m_Context.pWindow->effects().reset();
+            animvar->m_Context.pWindow->effects().settleMotionBlur();
+            animvar->m_Context.pWindow->effects().resetWobble();
         }
     }
 }

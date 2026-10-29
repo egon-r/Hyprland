@@ -128,12 +128,16 @@ hl.config({
 
         -- Opt-in motion blur for moving and resizing windows. `strength` scales the smear
         -- length relative to the window's motion (1 = the actual motion, 2 = twice the
-        -- length, 0 disables the effect). Try it live without editing this file:
-        -- hyprctl eval 'hl.config({ decoration = { motion_blur = { enabled = true, samples = 8, strength = 2 } } })'
+        -- length, 0 disables the effect). `decay` keeps the trail shrinking toward the
+        -- window's final box for that many milliseconds after the movement stops (0 = clear
+        -- as soon as it settles); it re-renders the recorded motion, not cached frames.
+        -- Try it live without editing this file:
+        -- hyprctl eval 'hl.config({ decoration = { motion_blur = { enabled = true, samples = 8, strength = 2, decay = 200 } } })'
         motion_blur = {
             enabled  = false,
             samples  = 8,
             strength = 2,
+            decay    = 200,
         },
     },
 

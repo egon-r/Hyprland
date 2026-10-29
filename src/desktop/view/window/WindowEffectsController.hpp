@@ -27,6 +27,8 @@ namespace Desktop::View {
         void                                      onPositionUpdate(const CBox& previous, const CBox& current, eWindowUpdateSource source);
         std::optional<MotionBlur::SState>         motionBlurState(bool allowStale = false) const;
         void                                      damageMotionBlur(bool allowStale = false) const;
+        void                                      settleMotionBlur();
+        void                                      tickMotionBlurDecay();
         void                                      resetMotionBlur();
         void                                      resetWobble();
         void                                      reset();
