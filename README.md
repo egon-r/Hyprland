@@ -68,6 +68,9 @@ easy IPC, much more QoL stuff than other compositors and more...
 >
 > Known limits: popup/layer surfaces with non-normal buffer transforms use the normal unblurred path.
 > Menus/tooltips that only fade in place have no spatial motion to smear; this does not add new popup animations.
+> Trails on rotated or flipped outputs are not supported: the raw-surface trail path keeps unrotated
+> texture UVs, so popups/layers can show a wrong orientation while a trail is active on such monitors.
+> Outputs with a normal transform are unaffected.
 > Validation bounds: `:samples` 1–64, `:strength` 0–10, `:decay` 0–1000; helper math is covered by
 > `tests/helpers/MotionBlur.cpp`. The bundled
 > [`example/hyprland.lua`](example/hyprland.lua) demonstrates enabling it with
