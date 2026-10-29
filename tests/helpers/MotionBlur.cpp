@@ -2,8 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cmath>
-#include <limits>
 
 using namespace MotionBlur;
 
@@ -196,4 +196,132 @@ TEST(MotionBlurTracker, clampsStrengthToConfiguredRange) {
     ASSERT_TRUE(AT_ZERO.has_value());
     EXPECT_EQ(CLAMPED_LOW->previous.x, AT_ZERO->previous.x);
     EXPECT_EQ(CLAMPED_LOW->previous.w, AT_ZERO->previous.w);
+}
+
+// --- CTracker decay ---
+
+TEST(MotionBlurTracker, decayShrinksTrailLinearlyTowardCurrent) {
+    CTracker   tracker;
+    const CBox PREVIOUS = {100, 50, 100, 100};
+    const CBox CURRENT  = {50, 50, 100, 100};
+    const auto T0       = Time::steadyNow();
+
+    tracker.record(PREVIOUS, CURRENT, T0);
+
+    // pure translation of 50px: full extent is window width + one motion length
+    const auto FULL = tracker.state(7, {}, false, 1.0, T0, std::chrono::milliseconds(200));
+    ASSERT_TRUE(FULL.has_value());
+    EXPECT_DOUBLE_EQ(FULL->extents().w, 150);
+
+    // half-life of a 200 ms decay: the trail is halfway back to the current box
+    const auto HALFWAY = tracker.state(7, {}, false, 1.0, T0 + std::chrono::milliseconds(100), std::chrono::milliseconds(200));
+    ASSERT_TRUE(HALFWAY.has_value());
+    EXPECT_DOUBLE_EQ(HALFWAY->previous.x, 75); // halfway between 100 and 50
+    EXPECT_DOUBLE_EQ(HALFWAY->previous.w, 100);
+    EXPECT_DOUBLE_EQ(HALFWAY->current.x, CURRENT.x);
+    EXPECT_DOUBLE_EQ(HALFWAY->extents().w, 125); // window width + half a motion length
+
+    // strength still applies on top of the decayed trail
+    const auto DOUBLED = tracker.state(7, {}, false, 2.0, T0 + std::chrono::milliseconds(100), std::chrono::milliseconds(200));
+    ASSERT_TRUE(DOUBLED.has_value());
+    EXPECT_DOUBLE_EQ(DOUBLED->extents().w, 150); // window width + 2 * half a motion length
+}
+
+TEST(MotionBlurTracker, decayExpiresOnceFullyShrunk) {
+    CTracker   tracker;
+    const auto T0 = Time::steadyNow();
+    tracker.record({100, 50, 100, 100}, {50, 50, 100, 100}, T0);
+
+    // 1 ms before the configured duration ends the trail is still alive (and almost fully shrunk)
+    const auto LAST = tracker.state(7, {}, false, 1.0, T0 + std::chrono::milliseconds(199), std::chrono::milliseconds(200));
+    ASSERT_TRUE(LAST.has_value());
+    EXPECT_NEAR(LAST->previous.x, 50.25, 0.001);
+
+    EXPECT_FALSE(tracker.state(7, {}, false, 1.0, T0 + std::chrono::milliseconds(200), std::chrono::milliseconds(200)).has_value());
+    EXPECT_FALSE(tracker.state(7, {}, false, 1.0, T0 + std::chrono::milliseconds(250), std::chrono::milliseconds(200)).has_value());
+
+    EXPECT_TRUE(tracker.expired(T0 + std::chrono::milliseconds(200), std::chrono::milliseconds(200)));
+    EXPECT_FALSE(tracker.expired(T0 + std::chrono::milliseconds(199), std::chrono::milliseconds(200)));
+}
+
+TEST(MotionBlurTracker, staleStateKeepsFullFootprintPastExpiry) {
+    CTracker   tracker;
+    const CBox PREVIOUS = {100, 50, 100, 100};
+    const CBox CURRENT  = {50, 50, 100, 100};
+    const auto T0       = Time::steadyNow();
+
+    tracker.record(PREVIOUS, CURRENT, T0);
+
+    // long past both the decay and the stock 100 ms cutoff, the stale path must still report the full recorded footprint so
+    // damage clearing covers everything the smear ever painted
+    const auto STALE = tracker.state(7, {}, true, 1.0, T0 + std::chrono::milliseconds(1000), std::chrono::milliseconds(200));
+    ASSERT_TRUE(STALE.has_value());
+    EXPECT_EQ(STALE->previous.x, PREVIOUS.x);
+    EXPECT_EQ(STALE->previous.w, PREVIOUS.w);
+    EXPECT_EQ(STALE->current.x, CURRENT.x);
+    EXPECT_DOUBLE_EQ(STALE->extents().w, 150);
+}
+
+TEST(MotionBlurTracker, decayZeroKeepsStockBehavior) {
+    CTracker   tracker;
+    const auto T0 = Time::steadyNow();
+    tracker.record({100, 50, 100, 100}, {50, 50, 100, 100}, T0);
+
+    // no decay: the trail renders untouched within the stock 100 ms window...
+    const auto FRESH = tracker.state(7, {}, false, 1.0, T0 + std::chrono::milliseconds(50), std::chrono::milliseconds(0));
+    ASSERT_TRUE(FRESH.has_value());
+    EXPECT_EQ(FRESH->previous.x, 100);
+
+    // ...and expires at the stock cutoff, unaffected by the decay parameter
+    EXPECT_FALSE(tracker.state(7, {}, false, 1.0, T0 + std::chrono::milliseconds(150), std::chrono::milliseconds(0)).has_value());
+    EXPECT_TRUE(tracker.expired(T0 + std::chrono::milliseconds(150)));
+}
+
+TEST(MotionBlurTracker, reanchorGluesTrailToFinalBoxWithoutRefreshingAge) {
+    CTracker   tracker;
+    const CBox PREVIOUS = {100, 50, 100, 100};
+    const CBox CURRENT  = {50, 50, 100, 100};
+    const auto T0       = Time::steadyNow();
+
+    tracker.record(PREVIOUS, CURRENT, T0);
+
+    // a minor tail move right before the motion settles: the recorded displacement follows onto the actual final box...
+    tracker.reanchor({51.5, 50, 100, 100});
+
+    const auto STATE = tracker.state(7, {}, false, 1.0, T0 + std::chrono::milliseconds(100), std::chrono::milliseconds(200));
+    ASSERT_TRUE(STATE.has_value());
+    EXPECT_DOUBLE_EQ(STATE->previous.x, 76.5); // shifted by the same +1.5 the final box moved
+    EXPECT_DOUBLE_EQ(STATE->current.x, 51.5);
+
+    // ...but the decay stays anchored to the last significant movement, so it still ends on schedule
+    EXPECT_TRUE(tracker.state(7, {}, false, 1.0, T0 + std::chrono::milliseconds(199), std::chrono::milliseconds(200)).has_value());
+    EXPECT_FALSE(tracker.state(7, {}, false, 1.0, T0 + std::chrono::milliseconds(200), std::chrono::milliseconds(200)).has_value());
+
+    // reanchoring an empty tracker is a no-op
+    CTracker empty;
+    empty.reanchor({50, 50, 100, 100});
+    EXPECT_FALSE(empty.state(7, {}, false, 1.0, T0, std::chrono::milliseconds(200)).has_value());
+}
+
+TEST(MotionBlurTracker, reanchorPreservesSizeDeltaOnMinorResize) {
+    CTracker   tracker;
+    const CBox PREVIOUS = {50, 50, 110, 100};
+    const CBox CURRENT  = {50, 50, 100, 100}; // resize of 10px in width
+    const auto T0       = Time::steadyNow();
+
+    tracker.record(PREVIOUS, CURRENT, T0);
+
+    // a minor tail resize: the final box is 1px narrower than the recorded current
+    tracker.reanchor({50, 50, 99, 100});
+
+    // the recorded size difference is retained, not collapsed onto the new current
+    const auto STATE = tracker.state(7, {}, false, 1.0, T0, std::chrono::milliseconds(200));
+    ASSERT_TRUE(STATE.has_value());
+    EXPECT_DOUBLE_EQ(STATE->previous.w, 109);
+    EXPECT_EQ(STATE->current.w, 99);
+
+    // half-way through the decay the size difference has halved
+    const auto HALFWAY = tracker.state(7, {}, false, 1.0, T0 + std::chrono::milliseconds(100), std::chrono::milliseconds(200));
+    ASSERT_TRUE(HALFWAY.has_value());
+    EXPECT_DOUBLE_EQ(HALFWAY->previous.w, 104);
 }

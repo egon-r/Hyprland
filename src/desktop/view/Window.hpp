@@ -393,6 +393,8 @@ namespace Desktop::View {
         std::optional<MotionBlur::SState> motionBlurState(bool allowStale = false) const;
         void                              damageMotionBlur(bool allowStale = false) const;
         void                              recordMotionBlur(const CBox& previous, const CBox& current);
+        void                              settleMotionBlur();
+        void                              tickMotionBlurDecay();
         void                              resetMotionBlur();
         void                              onUpdateState();
         void                              onUpdateMeta();

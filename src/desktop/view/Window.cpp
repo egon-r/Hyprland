@@ -652,8 +652,19 @@ void CWindow::damageMotionBlur(bool allowStale) const {
 }
 
 void CWindow::recordMotionBlur(const CBox& previous, const CBox& current) {
-    if (previous == current || !Render::CMotionBlurTransformer::shouldEnable(m_self.lock())) {
+    if (!Render::CMotionBlurTransformer::shouldEnable(m_self.lock())) {
         resetMotionBlur();
+        return;
+    }
+
+    const bool DECAYING = Render::CMotionBlurTransformer::decayTimeout().count() > 0;
+
+    if (previous == current) {
+        // the motion has settled: an opted-in decay keeps the trail shrinking instead of tearing it down
+        if (DECAYING)
+            settleMotionBlur();
+        else
+            resetMotionBlur();
         return;
     }
 
@@ -666,7 +677,19 @@ void CWindow::recordMotionBlur(const CBox& previous, const CBox& current) {
         SCALE;
 
     if (DELTA <= MIN_EDGE_DELTA_PX) {
-        resetMotionBlur();
+        if (!DECAYING) {
+            resetMotionBlur();
+            return;
+        }
+
+        // a minor tail move must not reset the trail: damage the old footprint first (the recorded boxes are about to shift), then
+        // glue the recorded displacement onto the actual final box and keep the decay running from the last significant movement
+        damageMotionBlur(true);
+
+        if (const auto MOTIONBLUR = motionBlurTransformer(this)) {
+            MOTIONBLUR->reanchor(current);
+            MOTIONBLUR->settle();
+        }
         return;
     }
 
@@ -683,6 +706,38 @@ void CWindow::recordMotionBlur(const CBox& previous, const CBox& current) {
 
     MOTIONBLUR->record(previous, current);
     damageMotionBlur();
+}
+
+// graceful end of motion (animation finished, drag ended): keeps the recorded trail for an opted-in decay instead of a hard clear
+void CWindow::settleMotionBlur() {
+    if (Render::CMotionBlurTransformer::decayTimeout().count() <= 0) {
+        resetMotionBlur();
+        return;
+    }
+
+    const auto MOTIONBLUR = motionBlurTransformer(this);
+    if (!MOTIONBLUR)
+        return;
+
+    // snap the decay target onto the actual final box so the lingering trail keeps tracking the settled window
+    MOTIONBLUR->reanchor(getFullWindowBoundingBox());
+    MOTIONBLUR->settle();
+}
+
+// decay tick from the transformer timer: repaints the shrinking smear at frame cadence and hard-resets once expired
+void CWindow::tickMotionBlurDecay() {
+    const auto MOTIONBLUR = motionBlurTransformer(this);
+    if (!MOTIONBLUR)
+        return;
+
+    if (MOTIONBLUR->expired()) {
+        // erases the full old damage and removes the transformer; MOTIONBLUR dangles past this point, do not touch it
+        resetMotionBlur();
+        return;
+    }
+
+    damageMotionBlur(true);
+    MOTIONBLUR->settle();
 }
 
 void CWindow::resetMotionBlur() {
@@ -2045,7 +2100,7 @@ static void setVector2DAnimToMove(WP<CBaseAnimatedVariable> pav) {
         animvar->m_Context.pWindow->m_animatingIn = false;
 
         if (!animvar->m_Context.pWindow->positionAnimation()->isBeingAnimated() && !animvar->m_Context.pWindow->sizeAnimation()->isBeingAnimated())
-            animvar->m_Context.pWindow->resetMotionBlur();
+            animvar->m_Context.pWindow->settleMotionBlur();
     }
 }
 

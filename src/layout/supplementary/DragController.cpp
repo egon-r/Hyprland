@@ -268,7 +268,7 @@ void CDragStateController::dragEnd() {
     }
 
     if (const auto W = draggingTarget->window(); W) {
-        W->resetMotionBlur();
+        W->settleMotionBlur();
         W->m_floatingOffset = {};
     }
 
