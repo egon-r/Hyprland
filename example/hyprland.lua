@@ -125,6 +125,16 @@ hl.config({
             passes    = 1,
             vibrancy  = 0.1696,
         },
+
+        -- Opt-in motion blur for moving and resizing windows. `strength` scales the smear
+        -- length relative to the window's motion (1 = the actual motion, 2 = twice the
+        -- length, 0 disables the effect). Try it live without editing this file:
+        -- hyprctl eval 'hl.config({ decoration = { motion_blur = { enabled = true, samples = 8, strength = 2 } } })'
+        motion_blur = {
+            enabled  = false,
+            samples  = 8,
+            strength = 2,
+        },
     },
 
     animations = {

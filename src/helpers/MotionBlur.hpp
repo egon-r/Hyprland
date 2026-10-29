@@ -7,6 +7,11 @@
 namespace MotionBlur {
     CBox extents(const CBox& previous, const CBox& current);
 
+    // Scales the motion recorded between `previous` and `current` by `strength`: 1 keeps `previous` unchanged, 2 doubles the smear
+    // length, 0 collapses it onto `current`. Non-finite strengths are treated as 1, and scaled sizes are clamped to a small positive
+    // value so aggressive resizes never produce invalid boxes.
+    CBox scaled(const CBox& current, const CBox& previous, double strength);
+
     struct SState {
         CBox previous;
         CBox current;
@@ -20,7 +25,7 @@ namespace MotionBlur {
         void                  record(const CBox& previous, const CBox& current);
         void                  reset();
 
-        std::optional<SState> state(int samples, const Vector2D& offset = {}, bool allowStale = false) const;
+        std::optional<SState> state(int samples, const Vector2D& offset = {}, bool allowStale = false, double strength = 1) const;
 
       private:
         CBox            m_previous;

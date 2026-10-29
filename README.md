@@ -33,6 +33,23 @@ easy IPC, much more QoL stuff than other compositors and more...
 
 </div>
 
+> [!IMPORTANT]
+> **Personal, unofficial build — not upstream Hyprland.** This repository is an independent
+> personal derivative of [hyprwm/Hyprland](https://github.com/hyprwm/Hyprland), based on
+> upstream **v0.56.2** and retaining upstream's README, license, and history. Its one local
+> feature is `decoration:motion_blur:strength`, a smear-length multiplier for window motion
+> blur, independent of the `:samples` count: range **0–10**, default **1** (smear matches the
+> recorded motion), **2** doubles the smear length, **0** disables the effect. The bundled
+> [`example/hyprland.lua`](example/hyprland.lua) demonstrates enabling it with
+> `enabled = true, samples = 8, strength = 2`.
+>
+> This repository is a **source/build artifact only**: compiling it produces a patched
+> compositor binary. A stock (unpatched) Hyprland has no such option, and the patched binary
+> is not what currently runs in the live session. The tests and build passed when the patch
+> was written, but the patched compositor has not been exercised in a live session. Nothing
+> here is official, supported by, affiliated with, or endorsed by upstream hyprwm — do not
+> report this fork's behavior there.
+
 # Features
 
 - All of the eyecandy: gradient borders, blur, animations, shadows and much more
