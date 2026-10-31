@@ -76,6 +76,10 @@ easy IPC, much more QoL stuff than other compositors and more...
 > [`example/hyprland.lua`](example/hyprland.lua) demonstrates enabling it with
 > `enabled = true, samples = 8, strength = 2, decay = 200`.
 >
+> ![Window motion blur demo][Window motion blur demo]
+>
+> Recorded window motion blur toggled off/on: samples 8, strength 2, decay 200 ms (animated WebP, 929 KiB).
+>
 > Verification status: all **299 unit tests** pass, and the built `Hyprland --version` command runs
 > successfully. The build reported stale gcov profile checksum warnings after recompilation; the
 > unit-test run completed without those warnings. A next-login isolated trial is authorized: the
@@ -191,6 +195,7 @@ easy IPC, much more QoL stuff than other compositors and more...
 [Preview A]: ./assets/prev1.png
 [Preview B]: ./assets/prev2.png
 [Preview C]: ./assets/prev3.png
+[Window motion blur demo]: ./assets/motion-blur-window.webp
 
 
 <!----------------------------------{ Badges }--------------------------------->
