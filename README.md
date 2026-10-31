@@ -36,7 +36,7 @@ easy IPC, much more QoL stuff than other compositors and more...
 > [!IMPORTANT]
 > **Personal, unofficial build — not upstream Hyprland.** This repository is an independent
 > personal derivative of [hyprwm/Hyprland](https://github.com/hyprwm/Hyprland), based on
-> upstream **v0.56.2** and retaining upstream's README, license, and history. Its local
+> upstream **v0.57.2** and retaining upstream's README, license, and history. Its local
 > features are `decoration:motion_blur:strength`, a smear-length multiplier for window motion
 > blur, independent of the `:samples` count: range **0–10**, default **1** (smear matches the
 > recorded motion), **2** doubles the smear length, **0** disables the effect; and
@@ -76,19 +76,22 @@ easy IPC, much more QoL stuff than other compositors and more...
 > [`example/hyprland.lua`](example/hyprland.lua) demonstrates enabling it with
 > `enabled = true, samples = 8, strength = 2, decay = 200`.
 >
-> Verification status: all **299 unit tests** pass, and the built `Hyprland --version` command runs
-> successfully. The build reported stale gcov profile checksum warnings after recompilation; the
-> unit-test run completed without those warnings. A next-login isolated trial is authorized: the
-> committed build is installed under `~/.local/opt/hyprland-animation-blur` (with the companion
-> cursor plugin rebuilt against that trial's installed headers), and the new config
-> `~/.config/hypr/animation-blur.lua` activates it at the next login; the trial artifact's version
-> reports this source commit instead of the older embedded `db28a35e` identity. No new rendering or
-> live verification was performed — the earlier UI checks do not verify the new rendering paths
-> visually, and the workstation remains in use.
-> A follow-up correctness fix keeps event-recorded layer animation pairs intact when the render-side
-> sample catches up at zero decay (previously the pair collapsed to current/current and the mapped
-> layer animation trail never rendered); the retained trail still clears on the bounded expiry. The
-> full unit-test suite (299 tests) still passes.
+> ![Window motion blur demo][Window motion blur demo]
+>
+> Recorded window motion blur toggled off/on: samples 8, strength 2, decay 200 ms (animated WebP, 929 KiB).
+>
+> Verification status (2026-11-15, rebased onto upstream **v0.57.2**): the port rides upstream's new
+> `CWindowEffectsController`/transformer-list architecture — window records go through
+> `effects().onPositionUpdate` with the `window_animations` gate applied at record time (wobble keeps its
+> upstream behavior regardless of the toggle), the workspace sampler and record box live on the effects
+> controller, and the explicit direct-scanout block was dropped because upstream's generalized
+> `blocksDirectScanout()` (transformer `active()`) already covers a live trail. One fork-side regression
+> was not ported: the old commit had accidentally dropped the fullscreen-alpha update in
+> `CWindow::moveToWorkspace`; upstream's line is kept. The build requires `hyprland-protocols>=0.8.0`
+> (installed to `~/.local` here; upstream no longer vendors a fallback). All **882 unit tests** pass
+> (30 MotionBlur helper tests included), and the built `Hyprland --version` reports 0.57.2 at the
+> rebased commits. No live rendering verification was performed for the rebased build; the running
+> session still uses the previously installed build.
 >
 > This repository is a **source/build artifact only**. The working installation under
 > `~/.local/opt/hyprland-motion-blur` is preserved untouched and keeps running the `db28a35e`
@@ -198,6 +201,7 @@ easy IPC, much more QoL stuff than other compositors and more...
 [Preview A]: ./assets/prev1.png
 [Preview B]: ./assets/prev2.png
 [Preview C]: ./assets/prev3.png
+[Window motion blur demo]: ./assets/motion-blur-window.webp
 
 
 <!----------------------------------{ Badges }--------------------------------->
