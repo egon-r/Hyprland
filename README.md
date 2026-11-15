@@ -90,12 +90,18 @@ easy IPC, much more QoL stuff than other compositors and more...
 > `CWindow::moveToWorkspace`; upstream's line is kept. The build requires `hyprland-protocols>=0.8.0`
 > (installed to `~/.local` here; upstream no longer vendors a fallback). All **882 unit tests** pass
 > (30 MotionBlur helper tests included), and the built `Hyprland --version` reports 0.57.2 at the
-> rebased commits. No live rendering verification was performed for the rebased build; the running
-> session still uses the previously installed build.
+> rebased commits. A next-login trial is installed: the RelWithDebInfo build (no test coverage
+> instrumentation) lives under `~/.local/opt/hyprland-0.57.2` with bundled `libaquamarine.so.15` /
+> `libhyprgraphics.so.5` and rpath `$ORIGIN/../lib`, the companion `dynamic-cursors` plugin is rebuilt
+> against that prefix's headers (`hypr-dynamic-cursors` @ 5bbae5d, ported to the same
+> renderer-context API), and `~/.config/hypr/animation-blur-0.57.2.lua` + the
+> `80-animation-blur-0.57.2.conf` uwsm drop-in activate it at the next login; `--verify-config`
+> passes. No live rendering verification was performed yet; the running session keeps the older
+> `/opt/hyprland-animation-blur` build until that login.
 >
-> This repository is a **source/build artifact only**. The working installation under
-> `~/.local/opt/hyprland-motion-blur` is preserved untouched and keeps running the `db28a35e`
-> build (strength/decay) in the live session. Nothing here is official, supported by, affiliated
+> This repository is a **source/build artifact only**. The running session uses the older pinned
+> `/opt/hyprland-animation-blur` package; the `~/.local/opt/hyprland-motion-blur` prefix is kept for
+> rollback. Nothing here is official, supported by, affiliated
 > with, or endorsed by upstream hyprwm — do not report this fork's behavior there.
 
 # Features
